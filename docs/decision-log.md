@@ -37,3 +37,17 @@
 **Process change going forward:** After any task handoff, verify via `git log --oneline` (confirm a new commit landed) and `cat`/`find` on the actual changed files — never accept a chat summary of what was done as sufficient. If a session reports completion but git shows no new commit, don't re-prompt the same session more than once — start a fresh session, since a session stuck in a false-completion loop is unlikely to self-correct.
 
 **Status:** Standing practice for all remaining tasks.
+
+## Entry #5 — Local environment setup + Phoenix pytest plugin bug
+
+**Setup (one-time, done W1.3):** Python 3.12 not present by default on macOS — installed via `brew install python@3.12` (landed at `/opt/homebrew/bin/python3.12`). Created venv with `python3.12 -m venv .venv`, activated with `source .venv/bin/activate`, then `pip install -e .` to pull all 14 pinned dependencies.
+
+**Known issue:** `arize-phoenix==8.0.0` auto-registers itself as a pytest plugin (`pytest11` entry point) and its own internal import (`phoenix/experiments/functions.py` → `phoenix.evals.models.rate_limiters`) is broken in this version, which crashes pytest at startup before it even collects tests — unrelated to any of our own code.
+
+**Workaround:** run tests with plugin autoloading disabled:
+```
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest tests/ -v
+```
+This loses Phoenix's tracing integration for that run, which is fine for schema/unit-level tests. Revisit when Phoenix tracing is actually needed (W2+), since we may need a real fix (version bump or config change) rather than this workaround by then.
+
+**Status:** Standing workaround. Remember to activate `.venv` (`source .venv/bin/activate`) before running any Python command in this repo going forward — a fresh terminal tab defaults back to system Python 3.9, which will fail with `ModuleNotFoundError: No module named 'creativesignal'`.
