@@ -1,7 +1,7 @@
 .PHONY: ingest annotate index eval slice app mcp test
 
 ingest:
-	@echo "ingest: not yet implemented"
+	python -m creativesignal.ingest.build_corpus
 
 annotate:
 	@echo "annotate: not yet implemented"
