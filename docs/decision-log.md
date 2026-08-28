@@ -362,3 +362,15 @@ Raw similarity *does* separate relevance. But two things make it look more confi
 **The larger rule this sets:** a model scoring its own system's outputs measures nothing. The human rubric exists precisely to get judgment from outside the system, so any score I generated would defeat the artifact's purpose while looking like progress. Same reasoning as B1 (not fabricating Tier-3) and the training refusals — the failure mode throughout this project is *plausible output standing in for absent measurement*.
 
 **Status:** rubric finalized; scoring pass outstanding (needs generated runs → needs B3).
+
+## Entry #22 — Tier-3 category scope: skincare + lip balm + deodorant, shampoo excluded (W0.3)
+
+**Decision (human, recorded here):** the curated Tier-3 sample keeps **skincare, lip balm, and deodorant** in scope and **excludes shampoo/haircare**.
+
+**Rationale.** The vertical is "skincare" (Entry #1), and the boundary question is which adjacent personal-care categories share the ad conventions the product reasons about. Lip balm and deodorant do: they are topical, applied to the body, and their advertising uses the same claim vocabulary the Reviewer checks — ingredient-led reasons to believe, dermatologist/clinical authority framing, and sensitivity/irritation claims. Shampoo does not: haircare advertising centres on hair texture, volume, and styling outcomes, with a largely separate claim vocabulary and no skin-contact safety framing. Including it would widen the corpus without widening what the retrieval or reviewer layers can say anything useful about.
+
+**This is also the boundary the W1.4 Tier-2 filter already enforces.** `NON_SKINCARE_PRODUCTS` vetoes `hair`, `shampoo`, and `conditioner` (Entry #7, where "Hair Serum" matched on "serum"). The Tier-3 curation rule and the Tier-2 filter now agree, which matters because the two tiers are searched as one corpus.
+
+**Verified against the delivered file:** 0 rows mention shampoo or conditioner; a single row mentions "hair" incidentally (`T3-006`, a CeraVe body-wash ad whose copy reads "work for BOTH of us"). The exclusion was applied at curation time, so no code-side filter is needed for Tier-3 — the rule is recorded here rather than implemented, and `load_tier3` deliberately does not re-filter what a human already scoped.
+
+**Consequence for the `category` column:** it now holds `lip balm` and `deodorant` alongside the skincare categories. Nothing downstream keys on a closed category set — `category` is a display and filter field, not a label — so no schema or model change follows.
