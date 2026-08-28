@@ -29,6 +29,15 @@ SKINCARE_KEYWORDS: tuple[str, ...] = (
     "eye cream",
 )
 
+# Matched against the *product name only*, which is what actually determines
+# category. Without this, "wrinkle" pulls in garment steamers and clothes
+# irons (wrinkle-free shirts) and "serum" pulls in hair serum — 4 of the
+# first 24 matches were these false positives. See decision-log Entry #7.
+NON_SKINCARE_PRODUCTS: tuple[str, ...] = (
+    "iron", "steamer", "garment", "clothing", "fabric", "laundry", "hair",
+    "shampoo", "conditioner",
+)
+
 _RIGHTS = {
     "ad-copy-generation": (
         "Synthetic ad copy, smangrul/ad-copy-generation. License UNDECLARED on "
@@ -52,10 +61,44 @@ _SMANGRUL_RE = re.compile(
 )
 
 
-def is_skincare(*texts: str | None) -> bool:
-    """True if any keyword appears in the concatenated text."""
-    blob = " ".join(t for t in texts if t).lower()
+def is_skincare(product: str | None, *texts: str | None) -> bool:
+    """True if the row is a skincare ad.
+
+    Two-step: the product name must not name a non-skincare category, then any
+    skincare keyword may appear anywhere in the row. Ordering matters — the
+    exclusion is a veto, because product name is the category signal and the
+    body copy is where the misleading keyword overlap lives.
+    """
+    product_l = (product or "").lower()
+    if any(bad in product_l for bad in NON_SKINCARE_PRODUCTS):
+        return False
+    blob = " ".join(t for t in (product, *texts) if t).lower()
     return any(kw in blob for kw in SKINCARE_KEYWORDS)
+
+
+def _dedupe_key(creative: Creative) -> str:
+    """Normalized body copy — the field that actually carries the ad."""
+    return " ".join((creative.body_copy or "").lower().split())
+
+
+def dedupe(creatives: list[Creative]) -> list[Creative]:
+    """Drop creatives whose ad copy duplicates an earlier one.
+
+    The two Tier-2 datasets overlap heavily — many rows are byte-identical
+    across them, so an undeduped corpus double-counts the same ad under two
+    ids. That would inflate every retrieval metric (the same text matching
+    twice looks like two relevant results) and let a duplicate be "retrieved
+    evidence" for itself. First occurrence wins. See decision-log Entry #7.
+    """
+    seen: set[str] = set()
+    out: list[Creative] = []
+    for creative in creatives:
+        key = _dedupe_key(creative)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(creative)
+    return out
 
 
 def _load_parquet(path: Path):
@@ -128,4 +171,5 @@ def load_jaykin(raw_dir: Path = RAW_DIR, observed: date | None = None) -> list[C
 
 
 def load_tier2(raw_dir: Path = RAW_DIR, observed: date | None = None) -> list[Creative]:
-    return load_smangrul(raw_dir, observed) + load_jaykin(raw_dir, observed)
+    """Both datasets, skincare-filtered and cross-deduplicated."""
+    return dedupe(load_smangrul(raw_dir, observed) + load_jaykin(raw_dir, observed))

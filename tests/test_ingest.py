@@ -18,7 +18,7 @@ from creativesignal.ingest.build_corpus import (
     count_by_tier,
     insert_creatives,
 )
-from creativesignal.ingest.load_tier2 import is_skincare
+from creativesignal.ingest.load_tier2 import dedupe, is_skincare
 from creativesignal.ingest.load_tier3 import (
     compute_days_active,
     compute_proxy_bucket,
@@ -43,12 +43,47 @@ def _tier3_csv(tmp_path, rows: str):
 
 def test_skincare_filter_matches_on_any_field():
     assert is_skincare("Retinol Serum", None, None)
-    assert is_skincare(None, "a gentle cleanser for daily use", None)
+    assert is_skincare("Daily wash", "a gentle cleanser for daily use", None)
     assert not is_skincare("Harem pants", "bohemian trousers", "shop now")
 
 
 def test_skincare_filter_is_case_insensitive():
     assert is_skincare("HYALURONIC ACID")
+
+
+@pytest.mark.parametrize(
+    "product,body",
+    [
+        # "wrinkle" here means creased shirts, not skin.
+        ("Steam Iron", "Experience wrinkle-free clothing with ease."),
+        ("Garment Steamer", "Experience wrinkle removal and garment care."),
+        # "serum" here is haircare.
+        ("Hair Serum", "Shiny, manageable, frizz-free locks."),
+    ],
+)
+def test_skincare_filter_vetoes_non_skincare_products(product, body):
+    """Regression: these three matched on body-copy keyword overlap alone."""
+    assert not is_skincare(product, body)
+
+
+def test_dedupe_drops_identical_ad_copy():
+    """The two Tier-2 datasets share most rows verbatim."""
+    a = _creative("t2_smangrul_0343", body_copy="Look sharp with the Iron!")
+    b = _creative("t2_jaykin_0312", body_copy="Look sharp with the Iron!")
+    c = _creative("t2_jaykin_0396", body_copy="Achieve a natural look with CC Cream!")
+    kept = dedupe([a, b, c])
+    assert [x.creative_id for x in kept] == ["t2_smangrul_0343", "t2_jaykin_0396"]
+
+
+def test_dedupe_ignores_whitespace_and_case():
+    a = _creative("a", body_copy="Glow  serum\nfor you")
+    b = _creative("b", body_copy="glow serum for you")
+    assert len(dedupe([a, b])) == 1
+
+
+def test_dedupe_drops_rows_with_no_copy():
+    """A creative with no ad copy has nothing to retrieve on."""
+    assert dedupe([_creative("a", body_copy=None)]) == []
 
 
 # --- Tier-3 derived proxy fields (F1) ------------------------------------

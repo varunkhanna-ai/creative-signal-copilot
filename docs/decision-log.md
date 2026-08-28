@@ -18,11 +18,25 @@ W0.3 was never done. Consequences:
 
 **Unblocked by:** the human doing W0.3 (2h in plan) and saving to `data/raw/tier3_meta_sample.csv`. `ingest/load_tier3.py` is built, validates against the template's 14 columns, and will pick the file up with no code change.
 
-### B2 — Tier-2 skincare yield is 24 rows, not ~300 (blocks every eval number)
+### B2 — Tier-2 yields **9 unique** skincare ads, not ~300 (blocks every eval number, and W1.8)
 
-Measured, not assumed. Filtering both ad-copy datasets on ~20 skincare keywords yields **13 rows** from `jaykin01/advertisement-copy` (of 1141) and **11** from `smangrul/ad-copy-generation` (of 1000).
+Measured, then re-measured after two filter bugs were fixed (Entry #7). The honest number is **9**:
 
-At 24 records, retrieval metrics are not measurements: Recall@5 / Precision@5 over a corpus barely larger than the result set is degenerate, and W2.8's semantic-vs-hybrid comparison — the point of the task — cannot separate the two conditions. **No eval run has been executed and no eval numbers have been committed.** `make eval` is wired and will run; it is deliberately unrun rather than run-and-reported on a corpus that would make the output meaningless.
+| Stage | Rows |
+|---|---|
+| Raw keyword match across both datasets | 24 |
+| After vetoing non-skincare products (clothes irons, garment steamers, hair serum matched on "wrinkle"/"serum") | 16 |
+| After cross-dataset dedupe (the two datasets overlap almost entirely) | **9** |
+
+The nine: anti-aging serum, eye cream, sunscreen, body scrub, face scrub, moisturizing cream, facial cleanser, exfoliating scrub, CC cream.
+
+This is worse than first reported and blocks more than eval:
+
+- **Retrieval metrics are degenerate.** Recall@5 / Precision@5 over a 9-document corpus means a single query retrieves more than half the corpus. W2.8's semantic-vs-hybrid comparison cannot separate the two conditions at this size. **No eval run has been executed and no eval numbers committed.** `make eval` is wired and will run; it is deliberately unrun rather than reported on a corpus that would make the output meaningless.
+- **W1.8 LR training is not viable.** Nine rows across 6–8 `hook_type` classes averages roughly one example per class. There is no train/test split worth making. The classical annotator is built and unit-tested on synthetic data; it has not been trained on the real corpus.
+- **The corpus has near-zero stylistic variance.** All nine follow one generated template — "Experience X! Perfect for Y. Limited stock - Z." Every single row contains "Limited stock," so the W4.5 false-scarcity check would flag 100% of the corpus. A `tone`/`hook_type` classifier trained here would learn one template, not a taxonomy.
+
+**Unblocked by:** B1 (Tier-3 lands → ~150–250 real, stylistically varied, provenance-rich rows) plus W2.6 golden set (Human, 20 queries × 3–5 relevant IDs). Both are prerequisites to any number entering `docs/eval-plan.md` or the README results table.
 
 **Unblocked by:** B1 (Tier-3 lands → ~150–250 provenance-rich rows) plus W2.6 golden set (Human, 20 queries × 3–5 relevant IDs). Both are prerequisites to any number entering `docs/eval-plan.md` or the README results table.
 
@@ -101,3 +115,20 @@ Blocks *execution* of every LLM path: W1.6 bootstrap labeling → therefore W1.8
 **Lesson worth keeping:** the earlier "pin all dependencies to exact versions" commit pinned only *direct* dependencies. Transitive dependencies stayed floating, so a project that looked fully pinned was still able to break on an upstream release. It surfaced as "the test suite is broken" rather than "tracing is broken," because a pytest plugin makes one library's import health everyone's problem.
 
 **Status:** Fixed. Consider a lockfile (`uv lock` / `pip freeze` snapshot) at W6.1 so the grader's install is reproducible.
+
+## Entry #7 — Tier-2 filter precision and cross-dataset dedupe (W1.4)
+
+**What the data showed.** Printing all 24 initially-matched rows surfaced two bugs that a row count alone would have hidden:
+
+1. **False positives from body-copy keyword overlap.** "Steam Iron," "Clothes Iron," and "Garment Steamer" matched on **wrinkle** — as in wrinkle-free *shirts*. "Hair Serum" matched on **serum**. Four of 24 matches were not skincare: a 17% error rate in the vertical filter, and every one of them would have become retrievable "evidence" for a skincare brief.
+2. **Near-total overlap between the two Tier-2 datasets.** `t2_smangrul_0343` and `t2_jaykin_0312` are byte-identical, as are Steam Iron, Garment Steamer, Facial Cleanser, Moisturizing Cream, Anti-Aging Serum, Sunscreen, Eye Cream, Body Scrub, and Face Scrub. `jaykin01/advertisement-copy` and `smangrul/ad-copy-generation` are not independent sources.
+
+**Decisions.**
+
+- **Product-name veto** (`NON_SKINCARE_PRODUCTS`), checked before the keyword match. The product name is the category signal; the body copy is where misleading overlap lives, so the veto reads the product name only. Ordering matters and is asserted in tests.
+- **Cross-dataset dedupe on normalized body copy**, first occurrence wins. Rationale beyond tidiness: a duplicate inflates every retrieval metric (the same text matching twice looks like two relevant results) and would let an ad be cited as independent evidence for itself — a direct hit on "every insight is traceable to examples," since the two citations would trace to one example.
+- A creative with **no body copy is dropped**: nothing to retrieve on.
+
+**Consequence, recorded rather than smoothed over:** the usable Tier-2 corpus is **9 unique ads**, not the 24 first reported or the ~300 the plan assumed. B2 is updated with the corrected figure and the extra tasks it blocks (W1.8 LR training is no longer viable on real data). Finding this now rather than at W2.8 is the reason the eval numbers were not going to be trustworthy either way.
+
+**Lesson:** the row count looked fine at 24. Reading the actual rows is what surfaced both bugs — the L1 "failure reading" habit the plan schedules for eval runs applies just as well to ingest.
