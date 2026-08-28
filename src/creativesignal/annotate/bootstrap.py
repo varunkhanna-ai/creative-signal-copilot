@@ -104,12 +104,18 @@ def parse_response(text: str) -> tuple[str, str, str, str]:
 
 
 def fetch_rows(limit: int = SEED_TARGET, db_path: Path = DB_PATH) -> list[sqlite3.Row]:
-    """Tier-2 rows with ad copy, which is what the bootstrap labels (F2)."""
+    """Every creative with usable ad copy — the seed set for the LR (F2).
+
+    F2 originally scoped this to Tier-2 because Tier-3 did not exist. Now that
+    it does, the seed must span both: the classifier runs against the whole
+    corpus at inference, so training it only on synthetic Tier-2 copy would
+    fit it to a template that 90% of the corpus does not follow.
+    """
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         return conn.execute(
             "SELECT creative_id, headline, body_copy FROM creatives "
-            "WHERE source_type = 'tier2' AND body_copy IS NOT NULL "
+            "WHERE body_copy IS NOT NULL AND TRIM(body_copy) != '' "
             "ORDER BY creative_id LIMIT ?",
             (limit,),
         ).fetchall()
