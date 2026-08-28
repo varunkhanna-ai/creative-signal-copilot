@@ -142,3 +142,18 @@ Blocks *execution* of every LLM path: W1.6 bootstrap labeling → therefore W1.8
 **Why `unclear` is a label but not in the taxonomy:** the bootstrap LLM (W1.6) can return `unclear`. A forced wrong label enters the LR training set as silent noise and is unrecoverable afterwards; an explicit `unclear` is visible, countable, and can be routed to human review. It is deliberately not a member of `HOOK_TYPES`/`TONE_LABELS` so it can never be predicted as a real class.
 
 **Calibration caveat (B2).** These label sets were designed against skincare advertising conventions, **not** fitted to the current corpus — the nine available Tier-2 ads are one generated template and would support perhaps two of the thirteen labels. That is the right order of operations (the taxonomy should describe the domain, not the sample), but it means **label coverage must be re-checked when Tier-3 lands**. If a label draws near-zero real examples it should be merged or cut *then* — which requires re-running W1.6 onward, per the freeze rule. Deciding this now on nine template rows would be fitting to noise.
+
+## Entry #9 — Escalation confidence threshold: 0.70 (W1.9)
+
+**Decision:** `CONFIDENCE_THRESHOLD = 0.70` in `annotate/escalate.py`. Rows where *either* axis predicts below 0.70 escalate to Haiku.
+
+**The tradeoff being made.** This is the Job A PM story in one number. Lower threshold → fewer LLM calls, lower cost, more wrong labels shipped by the LR. Higher threshold → more LLM calls, higher cost, fewer wrong labels. The quantity to optimize is not raw LR accuracy but **accuracy on the rows the LR keeps**, since everything below the line gets relabeled anyway — which is why `report.py`'s threshold table reports `acc@kept` and `escal%` side by side rather than a single accuracy figure.
+
+**Why 0.70 specifically, and the honest caveat.** 0.70 is the standard starting point for a multi-class softmax over ~6–7 classes: comfortably above the ~0.14 uniform-random baseline, below the point where a well-separated class gets escalated for no reason. **It is not fitted to data** — it cannot be, because there is no seed set to fit against (B2/B3). The plan has W1.9 read the threshold off the W1.8 P/R table; that table needs the bootstrap to have run, which needs the API key and a corpus larger than nine template rows.
+
+**What must happen when data exists:** run `python -m creativesignal.annotate.classical`, read the printed threshold table, and pick the row where `acc@kept` clears the §11 target at the lowest `escal%`. If 0.70 is not that row, change the constant and amend this entry with the table. Treat the current value as a placeholder with a defensible prior, not a measured result.
+
+**Design choices that survive recalibration:**
+- **Per-row, not per-axis, escalation.** If either axis is unsure the whole row goes to the LLM. Splitting would mean two LLM calls for one row and an annotation whose halves came from different annotators — unattributable in the `annotator` column, which is the lineage guarantee §6 rests on.
+- **Escalated rows carry `confidence = NULL`.** The LLM emits no calibrated probability. Writing the LR's confidence would misattribute it and writing 1.0 would fabricate certainty; null is the honest value and keeps `AVG(confidence) WHERE annotator='logreg'` meaningful.
+- **Boundary is inclusive** (`>= threshold` keeps the row), asserted in tests so a later refactor can't silently flip it.
