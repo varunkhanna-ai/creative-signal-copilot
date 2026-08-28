@@ -1,4 +1,4 @@
-.PHONY: download ingest annotate index eval slice app mcp test
+.PHONY: download ingest annotate summaries index eval slice app mcp test
 
 download:
 	python -m creativesignal.ingest.download
@@ -9,8 +9,11 @@ ingest:
 annotate:
 	python -m creativesignal.annotate.bootstrap
 
+summaries:
+	python -m creativesignal.retrieval.cards
+
 index:
-	@echo "index: not yet implemented"
+	python -m creativesignal.retrieval.index
 
 eval:
 	@echo "eval: not yet implemented"

@@ -157,3 +157,30 @@ Blocks *execution* of every LLM path: W1.6 bootstrap labeling → therefore W1.8
 - **Per-row, not per-axis, escalation.** If either axis is unsure the whole row goes to the LLM. Splitting would mean two LLM calls for one row and an annotation whose halves came from different annotators — unattributable in the `annotator` column, which is the lineage guarantee §6 rests on.
 - **Escalated rows carry `confidence = NULL`.** The LLM emits no calibrated probability. Writing the LR's confidence would misattribute it and writing 1.0 would fabricate certainty; null is the honest value and keeps `AVG(confidence) WHERE annotator='logreg'` meaningful.
 - **Boundary is inclusive** (`>= threshold` keeps the row), asserted in tests so a later refactor can't silently flip it.
+
+## Entry #10 — Hybrid merge/rerank design (W2.1 walkthrough)
+
+**Decision — weighted score fusion, the V0 in Section 4, with three rules:**
+
+1. **Metadata filters are a hard pre-filter, applied before scoring.** Both BM25 and vector scores are corpus-relative; scoring the whole corpus and filtering afterwards yields scores that don't correspond to the returned set, and BM25's IDF term would still reflect documents that were filtered out. Pre-filtering also makes "show me only Tier-3 skincare on Meta" mean exactly what a user expects.
+
+2. **Normalize per-query, then weight 0.5/0.5 semantic/BM25.** BM25 scores are unbounded and query-length dependent; cosine similarity is roughly [0,1]. Summing them raw would let BM25 dominate arbitrarily. Min-max normalization *within each query's result set* puts both on [0,1] before weighting. An equal split is the honest starting point — there is no eval data to tune it against (B2), and a tuned weight without a golden set would be a fabricated result. `SEMANTIC_WEIGHT` is one named constant so W2.8 can sweep it the moment a golden set exists.
+
+3. **Dedupe by `creative_id`, keeping the max component score and recording every representation that matched.** A creative can match on its card, its analyst summary, and BM25 simultaneously — that is three hits on one record, not three results. Taking the max rather than the sum avoids rewarding a creative merely for being indexed twice, which would otherwise mean the two-representation design (§8) silently inflates its own ranking. The list of matching representations is retained on the result (`retrieved_by`) because W2.7 needs to know *which* representation matched.
+
+**Rejected: reciprocal rank fusion.** RRF is the more standard choice and is rank-based, so it sidesteps normalization entirely. It was rejected because it discards score *magnitude* — the difference between a 0.9 and a 0.4 match becomes just "first and second." At a 9-row corpus (B2) every query returns nearly everything, so magnitude is the only signal separating a real match from a weak one, and an explainable weighted sum is easier to defend in an interview than a tuned RRF constant. Revisit if the corpus grows past a few thousand records.
+
+**Rejected for V0: an LLM or cross-encoder reranker.** It is explicitly the Section 4 stretch. It also cannot be evaluated without a golden set, so adding it now would be sophistication with no measurement — precisely the tradeoff the project's philosophy resolves the other way.
+
+## Entry #11 — Recall@5 counting rule (W2.7 walkthrough)
+
+**The question:** a creative is indexed under two representations (card and analyst summary). If the card matches for query Q and the summary doesn't — or both match — what does Recall@5 count?
+
+**Decision: deduplicate to creative IDs first, then compute set metrics over IDs. A creative counts once, no matter how many of its representations matched.**
+
+- `Recall@5 = |relevant ∩ retrieved_top5_ids| / |relevant|`
+- `Precision@5 = |relevant ∩ retrieved_top5_ids| / |retrieved_top5_ids|` (denominator is the actual number returned, which can be under 5 on a 9-row corpus — using a literal 5 would silently penalize small result sets for the corpus's size rather than the retriever's quality)
+
+**Why:** the golden set labels *creatives* as relevant, not representations — a human labeling "which ads are relevant to this query" has no view of the index's internals. Counting representations would make the metric depend on an implementation detail (how many ways we happen to index a record) rather than on retrieval quality, and would let the two-representation design inflate its own score against the single-representation baseline it is being compared to. The semantic-vs-hybrid comparison is only fair if both sides are scored in the same units: creative IDs.
+
+**Consequence for the eval harness:** dedupe happens in the retriever, not the metric, so the metric receives a clean ID list. `citation_correctness` (W4.8) uses the same unit, which keeps retrieval and generation metrics directly comparable.
