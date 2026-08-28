@@ -1,0 +1,15 @@
+# The ONLY place colors are defined (AGENTS.md UI design direction).
+# Every page inherits this; no page defines its own colors or custom CSS.
+
+[theme]
+primaryColor = "#0F6B5C"            # deep teal — evidence/trust
+backgroundColor = "#FAFAF7"
+secondaryBackgroundColor = "#EFEFEA"
+textColor = "#1E1E1E"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

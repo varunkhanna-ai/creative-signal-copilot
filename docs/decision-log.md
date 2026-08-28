@@ -184,3 +184,39 @@ Blocks *execution* of every LLM path: W1.6 bootstrap labeling → therefore W1.8
 **Why:** the golden set labels *creatives* as relevant, not representations — a human labeling "which ads are relevant to this query" has no view of the index's internals. Counting representations would make the metric depend on an implementation detail (how many ways we happen to index a record) rather than on retrieval quality, and would let the two-representation design inflate its own score against the single-representation baseline it is being compared to. The semantic-vs-hybrid comparison is only fair if both sides are scored in the same units: creative IDs.
 
 **Consequence for the eval harness:** dedupe happens in the retriever, not the metric, so the metric receives a clean ID list. `citation_correctness` (W4.8) uses the same unit, which keeps retrieval and generation metrics directly comparable.
+
+## Entry #12 — Streamlit server segfault on first search (W2.9, debugging)
+
+**Symptom.** The app started fine and rendered every page, but the *first search* killed the server process outright — no traceback, no Python exception, connection dropped and the browser fell back to "CONNECTING". Nothing in the Streamlit log.
+
+**Wrong first hypothesis.** The obvious suspect was PyTorch: the search is the first thing that loads `sentence-transformers`, and torch-in-a-thread crashes are common. Disabling Streamlit's file watcher (`--server.fileWatcherType none`), the standard fix for the known torch/watcher interaction, **did not help** — the server died the same way.
+
+**Actual root cause, from the macOS crash report** (`~/Library/Logs/DiagnosticReports/`), not from guessing:
+
+```
+EXC_BAD_ACCESS (SIGSEGV) at 0x18
+libarrow.2500.dylib  mi_heap_main
+libarrow.2500.dylib  mi_thread_init
+libarrow.2500.dylib  _mi_malloc_generic
+...
+_dataset.cpython-312-darwin.so  __pyx_pymod_exec__dataset
+```
+
+Not torch at all — **PyArrow**. Arrow's bundled **mimalloc** allocator segfaults during thread-heap initialization when a pyarrow submodule (`pyarrow._dataset`) is first imported inside Streamlit's script-runner thread. Streamlit reaches pyarrow through `st.dataframe`, which the corpus-health panel calls.
+
+**Fix.** `ARROW_DEFAULT_MEMORY_POOL=system` — switch Arrow off mimalloc to the system allocator. Set via `os.environ.setdefault` at the top of `app/shared.py`, which every page imports before touching Chroma or dataframes. Verified: with the env var set *only* in code and nothing at the launch command, search completes and the server survives.
+
+**Why the env var and not a code restructure:** the crash is inside a C++ allocator during module init — there is no Python-level ordering fix that reliably prevents it, and the system allocator costs nothing at this corpus size. It is one line with a comment pointing here.
+
+**Lessons.**
+1. **The crash report was the whole investigation.** A segfault produces no Python traceback, so the temptation is to guess from the symptom — and the plausible guess (torch) was wrong and cost a fix attempt. macOS writes a full native backtrace for every SIGSEGV; reading it named the library, the allocator, and the exact module in one step.
+2. **`AppTest` reproduced it faster than the browser.** Streamlit's own test harness segfaulted identically (exit 139) with no UI in the loop, which confirmed it was a real server crash and not a browser/automation artifact.
+3. **This would have shipped.** It reproduces on the deploy path (W6.1) and kills the app on a recruiter's first click. Worth carrying into W6.2 as an already-applied fix rather than rediscovering it under deploy pressure.
+
+**Bonus observation, recorded for the case study.** The query "authority-led moisturizer" retrieves the moisturizer ad with semantic score 1.000 and BM25 score 0.000 — the ad copy contains none of those words. That is the §8 two-representation design doing exactly what it was chosen to do, and it is the concrete example to use when explaining why hybrid beats keyword-only. It is an illustration, not a measurement (B2).
+
+## Entry #13 — Search is a form, not a live text input (W2.9)
+
+**Decision:** the explore page wraps its search box in `st.form` with an explicit **Search** button.
+
+**Why:** a bare `st.text_input` re-runs the script on every keystroke, and each run triggers an embedding pass over the query — visibly laggy and wasteful. The form defers the run until submit. It is also more discoverable than Streamlit's small "Press Enter to apply" hint, and it gives the demo a clickable target rather than a keypress.

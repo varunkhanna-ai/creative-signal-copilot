@@ -22,7 +22,7 @@ slice:
 	python -m creativesignal.slice $(if $(BRIEF),--brief "$(BRIEF)",)
 
 app:
-	@echo "app: not yet implemented"
+	streamlit run app/streamlit_app.py
 
 mcp:
 	@echo "mcp: not yet implemented"
