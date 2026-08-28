@@ -22,6 +22,14 @@ dependencies = [
     "matplotlib==3.10.0",
     "mcp==1.6.0",
     "pytest==8.3.0",
+    "openpyxl==3.1.5",
+    # Transitive pins. arize-phoenix 8.0.0 imports `phoenix.evals.models`
+    # (dropped in arize-phoenix-evals 2.x+) and `uvicorn.config.LoopSetupType`
+    # (dropped in uvicorn 0.35+). Unpinned, both break `import phoenix` — and
+    # because Phoenix registers a pytest11 plugin, that took down the entire
+    # test suite at collection time, not just tracing.
+    "arize-phoenix-evals==0.20.8",
+    "uvicorn==0.34.3",
 ]
 
 [project.optional-dependencies]
@@ -34,3 +42,10 @@ packages = ["src/creativesignal"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Third-party deprecation noise (Phoenix's Starlette/Authlib usage) drowns out
+# real output. Our own code's warnings still surface.
+filterwarnings = [
+    "ignore::DeprecationWarning:phoenix.*",
+    "ignore:.*HTTP_422_UNPROCESSABLE_ENTITY.*:DeprecationWarning",
+    "ignore:.*authlib.jose.*:DeprecationWarning",
+]

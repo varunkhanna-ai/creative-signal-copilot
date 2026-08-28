@@ -79,3 +79,25 @@ Blocks *execution* of every LLM path: W1.6 bootstrap labeling → therefore W1.8
 **Process change going forward:** After any task handoff, verify via `git log --oneline` (confirm a new commit landed) and `cat`/`find` on the actual changed files — never accept a chat summary of what was done as sufficient. If a session reports completion but git shows no new commit, don't re-prompt the same session more than once — start a fresh session, since a session stuck in a false-completion loop is unlikely to self-correct.
 
 **Status:** Standing practice for all remaining tasks.
+
+## Entry #5 — F1 proxy-bucket thresholds: fixed, not percentile (W1.4)
+
+**Decision:** `proxy_bucket` is assigned by fixed thresholds — **high** if `days_active >= 90` *or* `variant_count >= 5`; **low** if `days_active < 30` *and* `variant_count <= 1`; **mid** otherwise.
+
+**Rationale — why fixed and not tertiles of the corpus:** Entry #3 puts `proxy_bucket` in `creatives` on the grounds that it is *deterministic from its source fields*. Percentile bucketing would break exactly that property: a record's bucket would change when other records are added, making the column a function of the corpus rather than of the ad, and silently invalidating any tree trained before the last ingest. Fixed thresholds keep the field reproducible from `start_date` / `date_observed` / `variant_count` alone.
+
+**Why OR for high and AND for low:** the two signals are independent evidence of the same thing (advertiser keeps paying). Either a long run or heavy variation is sufficient to say "sustained investment"; it takes both a short run and no variation to say "no evidence of sustained investment."
+
+**Calibration status — open.** These numbers are not calibrated against real data, because there is no Tier-3 data yet (B1). 90 days and 5 variants are plausible industry-standard reference points, not fitted values. **When W0.3 lands, check the resulting class balance before training the W3.6 tree** — if one bucket holds most of the corpus, the tree will be uninformative and the thresholds should be re-set to roughly balance the three classes, with the change logged here.
+
+**Honesty framing (unchanged):** this is a spend-persistence signal, not a performance measurement. `compute_proxy_bucket`'s docstring carries that sentence so it stays attached to the code that produces the label.
+
+## Entry #6 — Dependency cascade blocking the whole test suite (W1.4, debugging)
+
+**What happened:** `pytest` could not collect *any* test — it died during startup, before running a single case. Root cause was two levels down: `arize-phoenix` 8.0.0 registers a `pytest11` entry-point plugin, so `import phoenix` happens at pytest startup regardless of whether a test touches tracing. That import failed twice over, on two *unpinned transitive* dependencies: `arize-phoenix-evals` 3.3.0 no longer exposes `phoenix.evals.models`, and `uvicorn` 0.52.1 no longer exposes `uvicorn.config.LoopSetupType`.
+
+**Fix:** pinned `arize-phoenix-evals==0.20.8` and `uvicorn==0.34.3` in `pyproject.toml`, with a comment recording why.
+
+**Lesson worth keeping:** the earlier "pin all dependencies to exact versions" commit pinned only *direct* dependencies. Transitive dependencies stayed floating, so a project that looked fully pinned was still able to break on an upstream release. It surfaced as "the test suite is broken" rather than "tracing is broken," because a pytest plugin makes one library's import health everyone's problem.
+
+**Status:** Fixed. Consider a lockfile (`uv lock` / `pip freeze` snapshot) at W6.1 so the grader's install is reproducible.
