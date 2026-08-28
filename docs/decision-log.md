@@ -374,3 +374,37 @@ Raw similarity *does* separate relevance. But two things make it look more confi
 **Verified against the delivered file:** 0 rows mention shampoo or conditioner; a single row mentions "hair" incidentally (`T3-006`, a CeraVe body-wash ad whose copy reads "work for BOTH of us"). The exclusion was applied at curation time, so no code-side filter is needed for Tier-3 — the rule is recorded here rather than implemented, and `load_tier3` deliberately does not re-filter what a human already scoped.
 
 **Consequence for the `category` column:** it now holds `lip balm` and `deodorant` alongside the skincare categories. Nothing downstream keys on a closed category set — `category` is a display and filter field, not a label — so no schema or model change follows.
+
+## Entry #23 — Proxy-bucket recalibration, and `variant_count` is unusable (W1.4 / W3.6)
+
+This is the recalibration Entry #5 required "before training the W3.6 tree." The delivered Tier-3 data forced it immediately.
+
+**Finding 1 — every one of the 95 curated ads bucketed `high`.** The original rule (`high` if `days_active >= 90` **or** `variant_count >= 5`) put 95/95 in one class. The tree's single-class guard refused to train, which is the guard working exactly as designed.
+
+**Finding 2 — `variant_count` is the constant 20 for all 95 rows.** Not a distribution, a constant. Measured:
+
+| Field | min | 25% | 50% | 75% | max |
+|---|---|---|---|---|---|
+| `days_active` | 1 | 5 | 20 | 26 | 173 |
+| `variant_count` | 20 | 20 | 20 | 20 | 20 |
+
+A constant column carries zero information, and via the `>= 5` clause it single-handedly forced the degenerate split — only 5 of 95 rows would have qualified as `high` on `days_active` alone.
+
+**Decision.** Drop `variant_count` from the bucket rule and recalibrate on `days_active` alone: **`low` < 10, `mid` 10–24, `high` >= 25**. Result on the real data: **low 36 / mid 31 / high 28**.
+
+- Thresholds stay **fixed, not percentile-based** — Entry #3 requires `proxy_bucket` to be deterministic from its source fields, so a record's bucket must not change when the corpus around it changes. They are now *informed by* the observed distribution (true tertiles 8.0 and 22.7 days) and rounded, rather than guessed.
+- `compute_proxy_bucket` still **accepts** `variant_count` and ignores it, so a corrected re-curation needs no call-site change. A test asserts passing it changes nothing.
+
+**What this costs, stated plainly.** F1 specified the proxy as `days_active` *plus* `variant_count`. Half of that is gone. The proxy is now purely a run-duration signal, which weakens it — a heavily-varied short-run ad and a single-creative short-run ad are no longer distinguishable. The honesty framing is unchanged and, if anything, easier to defend: this is spend-persistence, not performance.
+
+**Open for the human (curation gap, not a code bug).** `variant_count = 20` for every row looks like a placeholder or a scrape artifact (20 is a common page-size cap). If real per-ad variant counts can be recovered, re-curate that column and re-run this calibration — the thresholds above would then need re-checking against a two-signal rule.
+
+## Entry #24 — Tier-3 data-quality handling at load (W1.4)
+
+Three issues in the delivered curation, all handled at load rather than by editing the CSV. The CSV is the human's artifact; silently correcting it would make their curation and the loaded corpus disagree.
+
+1. **`category` is hand-typed and inconsistent** — mixed case (`Lotion`, `spf`, `Toner`, `Lip Balm`) plus a typo (`Deodrant`). Normalized to lowercase with an alias map (`deodrant` → `deodorant`, `spf` → `sunscreen`). 7 blank cells become `uncategorized` rather than being dropped.
+2. **4 rows carry an unrendered template variable** — `body_copy` is the literal string `{{product.brand}}` (T3-021, T3-022, T3-036, T3-037): the ad library captured the variable, not its value. That is not ad copy, and indexing it would put a meaningless high-frequency token in the corpus. `clean_body_copy` strips `{{...}}` and nulls a body that was *entirely* placeholder. **The rows are kept** — their provenance and `days_active` are real, and the tree uses them.
+3. **Heavy duplicate copy is real and is left alone.** Only 39 distinct `body_copy` texts across 93 non-empty rows. Unlike the Tier-2 case (Entry #7), these are **genuinely different ads**: distinct `ad_library_url`, distinct `start_date`, distinct `days_active`. Deduplicating them would destroy real observations and bias the proxy distribution. Noted here because it inflates apparent prevalence — five ads sharing one line of copy is one *creative idea* appearing five times, and any prevalence count over Tier-3 should be read with that in mind.
+
+Post-load corpus: **104 creatives** (95 Tier-3 + 9 Tier-2), 95 with resolvable source links, 98 with usable ad copy.

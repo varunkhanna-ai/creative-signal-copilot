@@ -17,6 +17,7 @@ derived columns are a convenience for the human curator.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -32,12 +33,17 @@ REQUIRED_COLUMNS: tuple[str, ...] = (
     "source_type", "rights_note",
 )
 
-# F1 longevity-proxy thresholds. Fixed (not percentile-based) so a record's
-# bucket never changes when the corpus around it changes — decision-log
-# Entry #3 requires proxy_bucket to be deterministic from its source fields.
-# Calibration is pending real Tier-3 data; see decision-log Entry #5.
-HIGH_DAYS, HIGH_VARIANTS = 90, 5
-LOW_DAYS, LOW_VARIANTS = 30, 1
+# F1 longevity-proxy thresholds, RECALIBRATED against the delivered Tier-3
+# data — decision-log Entry #23, which is the recalibration Entry #5 required
+# before the tree could be trained.
+#
+# Still fixed rather than percentile-based, so a record's bucket never changes
+# when the corpus around it changes (Entry #3 requires proxy_bucket to be
+# deterministic from its source fields). The values are now *informed* by the
+# observed distribution (true tertiles 8.0 and 22.7 days) rather than guessed:
+# <10 / 10-24 / >=25 splits the 95 curated ads 36 / 31 / 28.
+HIGH_DAYS = 25
+LOW_DAYS = 10
 
 
 def compute_days_active(start: date | None, observed: date | None) -> int | None:
@@ -48,23 +54,72 @@ def compute_days_active(start: date | None, observed: date | None) -> int | None
 
 
 def compute_proxy_bucket(
-    days_active: int | None, variant_count: int | None
+    days_active: int | None, variant_count: int | None = None
 ) -> ProxyBucket | None:
     """Bucket the longevity proxy into high / mid / low.
 
-    Descriptive only: a long-running, heavily-varied ad is one the advertiser
-    kept paying for. That is a spend-persistence signal, not a performance
-    measurement, and nothing downstream may describe it as one.
+    Descriptive only: a long-running ad is one the advertiser kept paying for.
+    That is a spend-persistence signal, not a performance measurement, and
+    nothing downstream may describe it as one.
+
+    `variant_count` is accepted but **deliberately unused** — in the delivered
+    curation it is the constant 20 for all 95 rows, so it carries no
+    information and, under the original rule, forced every ad into `high`.
+    See Entry #23. The parameter is kept so the signature survives a corrected
+    re-curation without a call-site change.
     """
-    if days_active is None and variant_count is None:
+    if days_active is None:
         return None
-    days = days_active or 0
-    variants = variant_count or 0
-    if days >= HIGH_DAYS or variants >= HIGH_VARIANTS:
+    if days_active >= HIGH_DAYS:
         return "high"
-    if days < LOW_DAYS and variants <= LOW_VARIANTS:
+    if days_active < LOW_DAYS:
         return "low"
     return "mid"
+
+
+# Curation is hand-typed, so `category` arrives with mixed case and at least
+# one typo. Normalized at load rather than corrected in the source file: the
+# CSV is the human's artifact, and silently editing it would make their
+# curation and the loaded corpus disagree.
+CATEGORY_ALIASES: dict[str, str] = {
+    "deodrant": "deodorant",  # typo in the curated sheet
+    "spf": "sunscreen",
+    "lip balm": "lip balm",
+}
+
+
+def normalize_category(value: Any) -> str:
+    """Lowercase, strip, and fix known spellings. Blank -> uncategorized."""
+    import pandas as pd
+
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return "uncategorized"
+    text = str(value).strip().lower()
+    if not text or text == "nan":
+        return "uncategorized"
+    return CATEGORY_ALIASES.get(text, text)
+
+
+def clean_body_copy(value: Any) -> str | None:
+    """Drop ad copy that is an unrendered template, not text.
+
+    Four curated rows carry a literal `{{product.brand}}` — the ad library
+    captured the template variable rather than its value. That string is not
+    ad copy: indexing it would put a meaningless token in the corpus and let
+    those rows match queries for reasons unrelated to their content. The row
+    is kept (its provenance and proxy fields are real and the tree uses them);
+    only the unusable copy is nulled.
+    """
+    import pandas as pd
+
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    # A body that is *entirely* placeholders carries no content.
+    without_placeholders = re.sub(r"\{\{[^}]*\}\}", "", text).strip()
+    return without_placeholders or None
 
 
 def _coerce_date(value: Any) -> date | None:
@@ -129,18 +184,17 @@ def load_tier3(path: Path = TIER3_CSV) -> list[Creative]:
         days_active = compute_days_active(start, observed)
 
         rights_note = str(row["rights_note"]) if not pd.isna(row["rights_note"]) else ""
-        category = str(row["category"]) if not pd.isna(row["category"]) else ""
         out.append(
             Creative(
                 creative_id=str(row["creative_id"]),
                 source_type="tier3",
                 advertiser=str(row["advertiser"]),
                 platform=str(row["platform"]),
-                # W0.3 left category/rights_note blank on some rows; fall back
-                # rather than drop the record, and make the gap legible.
-                category=category or "skincare (uncategorized)",
+                # Blank category/rights_note fall back rather than drop the
+                # record, and the gap stays legible.
+                category=normalize_category(row["category"]),
                 headline=None if pd.isna(row["headline"]) else str(row["headline"]),
-                body_copy=None if pd.isna(row["body_copy"]) else str(row["body_copy"]),
+                body_copy=clean_body_copy(row["body_copy"]),
                 source_url=(
                     None if pd.isna(row["ad_library_url"])
                     else str(row["ad_library_url"])

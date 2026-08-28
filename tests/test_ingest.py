@@ -104,22 +104,30 @@ def test_days_active_none_without_start():
 
 
 @pytest.mark.parametrize(
-    "days,variants,expected",
+    "days,expected",
     [
-        (120, 1, "high"),   # long-running alone qualifies
-        (10, 8, "high"),    # heavy variation alone qualifies
-        (60, 2, "mid"),
-        (10, 1, "low"),
-        (29, 0, "low"),
-        (30, 0, "mid"),     # boundary: LOW_DAYS is exclusive
+        (173, "high"),
+        (25, "high"),   # boundary: HIGH_DAYS is inclusive
+        (24, "mid"),
+        (10, "mid"),    # boundary: LOW_DAYS is inclusive of mid
+        (9, "low"),
+        (1, "low"),
     ],
 )
-def test_proxy_bucket_thresholds(days, variants, expected):
-    assert compute_proxy_bucket(days, variants) == expected
+def test_proxy_bucket_thresholds(days, expected):
+    assert compute_proxy_bucket(days) == expected
+
+
+def test_proxy_bucket_ignores_variant_count():
+    """Entry #23: variant_count is constant in the curated data, so it is
+    deliberately not part of the rule. Passing it must change nothing."""
+    assert compute_proxy_bucket(5, 20) == compute_proxy_bucket(5, 1) == "low"
+    assert compute_proxy_bucket(100, 20) == compute_proxy_bucket(100, 0) == "high"
 
 
 def test_proxy_bucket_none_when_no_signal():
     assert compute_proxy_bucket(None, None) is None
+    assert compute_proxy_bucket(None) is None
 
 
 # --- Tier-3 loader contract ----------------------------------------------
@@ -144,7 +152,7 @@ def test_tier3_loads_and_derives(tmp_path):
     assert creative.source_url == "https://example.com/ad/1"
     # Derived, not trusted from the sheet.
     assert creative.days_active == 86
-    assert creative.proxy_bucket == "mid"
+    assert creative.proxy_bucket == "high"
 
 
 def test_tier3_recomputes_rather_than_trusting_sheet(tmp_path):
@@ -168,7 +176,7 @@ def test_tier3_blank_rights_note_is_flagged_not_dropped(tmp_path):
     )
     [creative] = load_tier3(path)
     assert "MISSING" in creative.rights_note
-    assert creative.category == "skincare (uncategorized)"
+    assert creative.category == "uncategorized"
 
 
 def test_tier3_rejects_wrong_columns(tmp_path):
