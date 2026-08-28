@@ -1,0 +1,24 @@
+You are labeling skincare ad copy for a creative-intelligence corpus. Assign exactly one hook_type and one tone to the ad below.
+
+hook_type — the rhetorical device that OPENS the ad. Judge the opening move, not the whole ad:
+{hook_definitions}
+
+tone — the register the ad speaks in, across the whole ad:
+{tone_definitions}
+
+Rules:
+- Choose from the listed labels only. Never invent a label.
+- hook_type is about the OPENING. An ad that opens on a problem and later lists ingredients is problem_solution, not ingredient_led.
+- tone is about the WHOLE ad. Judge the dominant register; ignore a single stray word.
+- The two axes are independent. Any hook_type may pair with any tone.
+- If the ad genuinely does not fit — it is too short, too garbled, or sits equally between two labels with no dominant one — return "unclear" for that field. Returning "unclear" is correct behavior, not failure. Do not force a label to avoid it.
+- Judge only the text given. Do not infer from the brand or product category.
+
+Ad to label:
+---
+Headline: {headline}
+Body: {body_copy}
+---
+
+Return ONLY a JSON object, no prose, no code fence:
+{{"hook_type": "<label or unclear>", "tone": "<label or unclear>", "hook_reason": "<max 12 words quoting the opening move>", "tone_reason": "<max 12 words>"}}

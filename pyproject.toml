@@ -23,6 +23,7 @@ dependencies = [
     "mcp==1.6.0",
     "pytest==8.3.0",
     "openpyxl==3.1.5",
+    "python-dotenv==1.0.1",
     # Transitive pins. arize-phoenix 8.0.0 imports `phoenix.evals.models`
     # (dropped in arize-phoenix-evals 2.x+) and `uvicorn.config.LoopSetupType`
     # (dropped in uvicorn 0.35+). Unpinned, both break `import phoenix` — and

@@ -7,7 +7,7 @@ ingest:
 	python -m creativesignal.ingest.build_corpus
 
 annotate:
-	@echo "annotate: not yet implemented"
+	python -m creativesignal.annotate.bootstrap
 
 index:
 	@echo "index: not yet implemented"
