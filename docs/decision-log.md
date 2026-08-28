@@ -38,13 +38,21 @@ This is worse than first reported and blocks more than eval:
 
 **Unblocked by:** B1 (Tier-3 lands → ~150–250 real, stylistically varied, provenance-rich rows) plus W2.6 golden set (Human, 20 queries × 3–5 relevant IDs). Both are prerequisites to any number entering `docs/eval-plan.md` or the README results table.
 
-### B3 — `ANTHROPIC_API_KEY` not present
+### B3 — `ANTHROPIC_API_KEY` not readable from this worktree
 
-Reported as added to `.env`; no `.env` exists in `creativesignal-cc/`, `CAPSTONE/`, or `creativesignal-kc/` as of this run. `.env` files in sibling projects (`Agent Demo`, `ladder-*`) were left unread — harvesting another project's credential is not an autonomous call.
+The `.env` **does exist**, at `/Users/varunmacbook15/Desktop/project/CAPSTONE/.env` — the main checkout. This worktree (`creativesignal-cc/`) has no `.env`, and `python-dotenv` only searches upward from the working directory, so nothing here can load it.
 
-Blocks *execution* of every LLM path: W1.6 bootstrap labeling → therefore W1.8 LR training and W1.10 escalation (both need bootstrap labels), W2.3 analyst summaries, W3.3 analyst agent, W4.3 concepts, W4.5 reviewer. Code for these is built; none has been executed against the live API.
+Two attempts to bridge that were **blocked by the sandbox permission classifier**: reading the file's contents, and `cp`-ing it into this worktree. Neither was retried or worked around — a credential file is exactly the thing not to route around a permission denial for. `.env` files in sibling projects (`Agent Demo`, `ladder-*`) were left unread for the same reason.
 
-**Unblocked by:** `echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env` in the repo root (already gitignored).
+Blocks *execution* of every LLM path: W1.6 bootstrap labeling → therefore W1.8 LR training and W1.10 escalation (both need bootstrap labels), W2.3 analyst summaries, W3.3 concept generation, W4.3 concepts. Code for all of these is built and unit-tested with the LLM call stubbed; none has run against the live API. (The **reviewer is unaffected** — all four checks are deterministic by design, so W4.5 and the W4.9 planted-violation test run and pass without a key.)
+
+**Unblocked by** — either, from the repo root:
+
+```bash
+cp /Users/varunmacbook15/Desktop/project/CAPSTONE/.env /Users/varunmacbook15/Desktop/project/creativesignal-cc/.env
+```
+
+or make it worktree-independent by exporting it in the shell profile. `.env` is already gitignored here (`.gitignore:1`), verified before any commit.
 
 ### B4 — Tier-1 (AdImageNet) is gated (minor, off critical path)
 
@@ -344,3 +352,13 @@ Raw similarity *does* separate relevance. But two things make it look more confi
 **Decision: do not add a similarity floor yet.** The gap between genuinely relevant (0.67) and off-topic-but-plausible (0.59) is ~0.08. Picking a cutoff in that band without a golden set (B2) would be tuning on three hand-picked queries, and a floor set slightly too high silently returns nothing for real queries — a worse failure than returning weak results with an honest coverage statement. This is the same reasoning as Entry #9's threshold: pick it when there is data to pick it from.
 
 **Mitigation in the meantime.** The coverage statement travels with every result set (including through MCP), and the UI states that the score is retrieval similarity rather than evidence of performance. **When the golden set exists, sweep the floor alongside `SEMANTIC_WEIGHT` in W2.8 and record the chosen value here.**
+
+## Entry #21 — Human-scored artifacts are not model-generated (W5.8)
+
+**Decision:** `eval/rubric.md` ships as a scoring **template** — six dimensions, written 1/3/5 anchors, and a bare CSV header row. No example scored row, and no scores anywhere in the repository.
+
+**Why no example row, even a fake one:** a plausible-looking sample row is one copy-paste away from being mistaken for a real record, and it would sit in the same file as the real results once scoring happens. The column list already conveys the format; an example row adds nothing and adds a way to be wrong.
+
+**The larger rule this sets:** a model scoring its own system's outputs measures nothing. The human rubric exists precisely to get judgment from outside the system, so any score I generated would defeat the artifact's purpose while looking like progress. Same reasoning as B1 (not fabricating Tier-3) and the training refusals — the failure mode throughout this project is *plausible output standing in for absent measurement*.
+
+**Status:** rubric finalized; scoring pass outstanding (needs generated runs → needs B3).
