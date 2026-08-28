@@ -442,3 +442,17 @@ Entry #9 set 0.70 as a defensible prior with no data. The real out-of-fold thres
 **Two escalation rates, and the difference matters.** Running the full corpus at 0.35 gave **5.1%** (5 of 98 escalated). That number is **in-sample** — the deployed model was fit on the same seed it is now labeling, so it is over-confident on rows it has already seen. The **out-of-fold** table above is the honest production estimate: roughly **40%**, driven by tone. Report 40% as the expected rate and 5.1% only as what this specific re-labeling run cost. Quoting 5.1% as a production figure would overstate the cost saving by roughly 8x.
 
 **Cost so far:** $0.105 total for 98 bootstrap labels plus 5 escalations (Haiku), logged per call in `eval/cost_log.csv`.
+
+## Entry #27 — Tree trained on real data: `platform_count`, and two wording bugs (W3.6)
+
+**The tree trains.** 95 Tier-3 rows, balance low 36 / mid 31 / high 28, depth 3, **in-sample accuracy 0.62** against a ~0.33 three-class baseline. In-sample on 95 rows is directional only and is labeled as such everywhere it appears.
+
+The strongest rule: *among the 9 ingredient-led ads, 8 fall in the high longevity-proxy bucket.* Descriptive, cited, and exactly the shape the honesty rule requires — but note n=9, so it is a lead to investigate, not a finding.
+
+**Fix 1 — `platform` replaced with `platform_count`.** The real Ad Library `platform` field is a comma-separated *placement list* (`FACEBOOK,INSTAGRAM,MESSENGER,THREADS`), not a single value — six distinct combinations across 95 rows. One-hot encoding it made every *combination* its own sparse class and produced rules like "platform is not FACEBOOK,INSTAGRAM,AUDIENCE_NETWORK,MESSENGER,THREADS," which is unreadable and splits on an artifact of how placements were bundled. Replaced with the count of surfaces — an interpretable breadth-of-buy proxy that the tree now splits on meaningfully ("runs on more than 4 placement surfaces").
+
+**Fix 2 — the direction phrase was wrong for `mid`.** `rule_to_sentence` branched on `high` vs. everything-else, so a `mid` rule read "the advertiser kept running them **for a shorter period**" — false, and the kind of small wording error that quietly makes an output untrue. Now mapped per bucket (high → "longer", mid → "for a moderate period", low → "for a shorter period"), with a regression test per bucket.
+
+**Fix 3 — numeric conditions render as English.** `platform count <= 4.5` became the ungrammatical "platform is count <= 4.5" because the categorical humanizer ran first. Numeric features are now phrased before the categorical rules: "the ad runs on 4 or fewer placement surfaces", "the body is longer than 18 words".
+
+**Why these matter beyond tidiness.** The tree's deliverable is *sentences a human reads and repeats*. A rule that is unreadable will be ignored; a rule that is readable and **wrong** is worse — it gets repeated. The honesty enforcement in this module was aimed at performance vocabulary, and it caught none of these, because all three were accuracy failures rather than claim failures.

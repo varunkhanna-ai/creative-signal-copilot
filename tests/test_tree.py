@@ -52,7 +52,7 @@ def _rows(n: int = 60) -> list[dict]:
 def test_features_include_only_the_agreed_set():
     features, names = build_features(_rows(2))
     assert set(names) == {
-        "hook_type", "tone", "platform", "headline_length", "body_length",
+        "hook_type", "tone", "platform_count", "headline_length", "body_length",
         "has_offer_language", "has_ingredient_mention", "has_authority_language",
     }
 
@@ -63,6 +63,39 @@ def test_label_components_are_excluded_from_features():
     assert "days_active" not in names
     assert "variant_count" not in names
     assert "proxy_bucket" not in names
+
+
+def test_platform_count_replaces_the_raw_placement_list():
+    """Entry #27: `platform` is a comma-separated Ad Library placement list,
+    so one-hot on the raw string makes every combination its own class."""
+    from creativesignal.insight.tree import platform_count
+
+    assert platform_count("FACEBOOK,INSTAGRAM,MESSENGER") == 3
+    assert platform_count("FACEBOOK,INSTAGRAM") == 2
+    assert platform_count("unknown") == 0
+    assert platform_count(None) == 0
+
+
+def test_numeric_conditions_render_as_english_not_expressions():
+    from creativesignal.insight.tree import _humanize
+
+    assert _humanize("platform count <= 4.5") == (
+        "the ad runs on 4 or fewer placement surfaces"
+    )
+    assert _humanize("body length > 18.5") == "the body is longer than 18 words"
+
+
+@pytest.mark.parametrize(
+    "bucket,phrase",
+    [
+        ("high", "longer"),
+        ("mid", "for a moderate period"),
+        ("low", "for a shorter period"),
+    ],
+)
+def test_direction_phrase_is_correct_for_every_bucket(bucket, phrase):
+    """Regression: `mid` previously rendered as "for a shorter period"."""
+    assert phrase in rule_to_sentence(TreeRule(["tone_clinical"], bucket, 10, 6))
 
 
 def test_advertiser_is_excluded():

@@ -69,6 +69,16 @@ class TreeResult:
 # --- features -------------------------------------------------------------
 
 
+def platform_count(value: str | None) -> int:
+    """Number of placement surfaces in an Ad Library platform list.
+
+    "FACEBOOK,INSTAGRAM,MESSENGER" -> 3. Unknown -> 0.
+    """
+    if not value or str(value).strip().lower() == "unknown":
+        return 0
+    return len([p for p in str(value).split(",") if p.strip()])
+
+
 def _has_any(text: str, terms: tuple[str, ...]) -> int:
     lowered = (text or "").lower()
     return int(any(term in lowered for term in terms))
@@ -83,7 +93,13 @@ def build_features(rows: list[dict]) -> tuple[list[dict], list[str]]:
             {
                 "hook_type": row.get("hook_type") or "unknown",
                 "tone": row.get("tone") or "unknown",
-                "platform": row.get("platform") or "unknown",
+                # `platform` is a comma-separated Ad Library placement list
+                # ("FACEBOOK,INSTAGRAM,MESSENGER"). One-hot encoding the raw
+                # string makes every *combination* its own sparse class and
+                # renders unreadably in a rule. The interpretable signal is
+                # how many surfaces the ad was placed on — a breadth-of-buy
+                # proxy. See Entry #27.
+                "platform_count": platform_count(row.get("platform")),
                 "headline_length": len((row.get("headline") or "").split()),
                 "body_length": len((row.get("body_copy") or "").split()),
                 "has_offer_language": _has_any(copy, OFFER_TERMS),
@@ -200,6 +216,29 @@ DISCLAIMER = (
 def _humanize(condition: str) -> str:
     negated = condition.startswith("NOT ")
     text = condition.removeprefix("NOT ").replace("_", " ")
+
+    # Numeric features read as phrases, not as expressions. Handled before the
+    # categorical rules below, which would otherwise turn "platform count <= 4"
+    # into the ungrammatical "platform is count <= 4".
+    m = re.match(r"^platform count (<=|>) ([\d.]+)$", text)
+    if m:
+        op, value = m.group(1), float(m.group(2))
+        n = int(value)  # thresholds land on .5; floor gives the inclusive bound
+        return (
+            f"the ad runs on {n} or fewer placement surfaces"
+            if op == "<=" else
+            f"the ad runs on more than {n} placement surfaces"
+        )
+    m = re.match(r"^(headline|body) length (<=|>) ([\d.]+)$", text)
+    if m:
+        field, op, value = m.group(1), m.group(2), float(m.group(3))
+        n = int(value)
+        return (
+            f"the {field} is {n} words or fewer"
+            if op == "<=" else
+            f"the {field} is longer than {n} words"
+        )
+
     text = re.sub(r"^hook type ", "hook is ", text)
     text = re.sub(r"^tone ", "tone is ", text)
     text = re.sub(r"^platform ", "platform is ", text)
@@ -215,7 +254,11 @@ def _humanize(condition: str) -> str:
 def rule_claim(rule: TreeRule) -> str:
     """The descriptive half of a rule sentence — no disclaimer attached."""
     conditions = " and ".join(_humanize(c) for c in rule.conditions) or "all ads"
-    direction = "longer" if rule.predicted_bucket == "high" else "for a shorter period"
+    direction = {
+        "high": "longer",
+        "mid": "for a moderate period",
+        "low": "for a shorter period",
+    }.get(rule.predicted_bucket, "for an unrecorded period")
     return (
         f"Among the {rule.n_samples} curated ads where {conditions}, "
         f"{rule.n_matching} fall in the {rule.predicted_bucket} longevity-proxy "
