@@ -269,3 +269,26 @@ Copy addressing protected attributes or implying a health condition: age-shaming
 **Test.** `test_matches_survive_negative_bm25_scores` builds five identical documents, asserts all five are returned, and asserts as a precondition that their scores really are negative — so the regression cannot be "fixed" by a change that merely makes the scores positive.
 
 **Lesson.** The failing test was in the *agent* layer, three modules above the bug. The coverage gate (Entry #14) is what surfaced it: a retriever returning nothing looked, from inside the agent, exactly like a legitimately thin corpus. A guard designed for honesty caught a correctness bug — worth noting, since the temptation with a small corpus is to assume every empty result is a data problem.
+
+## Entry #17 — Insight-tree feature set and depth cap (W3.5 walkthrough)
+
+**Label:** `proxy_bucket` (high/mid/low), per F1. Confirmed.
+
+**Features — deliberately only what a strategist could act on:**
+- `hook_type` (one-hot, from `annotations`)
+- `tone` (one-hot, from `annotations`)
+- `platform` (one-hot)
+- `headline_length` and `body_length` (word counts)
+- `has_offer_language`, `has_ingredient_mention`, `has_authority_language` (binary, from the same vocabularies the reviewer uses)
+
+**Excluded, and why:** `advertiser` — it would let the tree memorize "CeraVe ads run long," which is true, useless, and reads as a claim about a brand rather than about creative. `days_active` and `variant_count` — these *are* the label (`proxy_bucket` is computed from them, Entry #5), so including them would let the tree reconstruct the label exactly and report ~100% accuracy that means nothing. `date_observed`/`start_date` — calendar artifacts of when curation happened, not properties of the ad.
+
+**Depth cap: 3.** Non-negotiable for interpretability — the deliverable is *rules a human reads as sentences*, and a depth-4+ tree produces conditions no one can hold in their head. With Tier-3 at 100–200 rows, depth 3 is also near the statistical limit: at depth 4 the average leaf holds fewer than 10 rows and the rules are noise. `min_samples_leaf = 5` for the same reason — a leaf built on two ads is not a pattern.
+
+**Wording rule for extracted rules (the judgment part).** Every rule renders as a prevalence sentence with the proxy named as a proxy, never as an outcome:
+
+> "Among the 34 retrieved ads that are ingredient-led and clinical in tone, 22 fall in the high longevity-proxy bucket — meaning the advertiser kept running them longer. This is a spend-persistence pattern in this corpus, not evidence that this combination performs better."
+
+Banned in rule text: *performs, works, converts, wins, drives, best, effective, successful*. A test asserts none of these appear in generated rule sentences, so the honesty framing is enforced mechanically rather than by reviewer discipline.
+
+**Status: cannot be trained.** Tier-3 does not exist (B1), so there is no label column. The module is built and unit-tested against a synthetic frame; it has never seen real data. `train_tree` refuses rather than fitting on too few rows, for the same reason the annotator does.
