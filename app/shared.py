@@ -113,3 +113,65 @@ def corpus_warning() -> None:
             "is outstanding, so retrieval quality here is not representative "
             "and no eval numbers are published. See docs/decision-log.md."
         )
+
+
+def render_trace(trace) -> None:
+    """W3.3: the agent's plan->tools->evidence path, collapsed by default."""
+    with st.expander("How this was produced"):
+        for i, step in enumerate(trace.steps, start=1):
+            st.markdown(f"{i}. **{step.name}** — {step.duration_s:.2f}s")
+            if step.inputs:
+                st.code(
+                    "\n".join(f"{k}={v!r}" for k, v in step.inputs.items()),
+                    language="python",
+                )
+            if step.error:
+                st.error(step.error)
+            elif step.output_summary:
+                st.caption(step.output_summary)
+        for note in trace.notes:
+            st.caption(f"Note: {note}")
+
+
+# Reviewer severities -> the two accent colours the UI direction allows.
+_FLAG_COLOR = {"claim": "red", "similarity": "orange", "info": "gray"}
+
+
+def reviewer_flags(review) -> None:
+    """Render reviewer flags inline on a concept, evidence on expand."""
+    if review is None:
+        return
+    if not review.flags:
+        st.caption(":green[Reviewer: no flags raised.]")
+        return
+
+    for flag in review.flags:
+        color = _FLAG_COLOR.get(flag.severity, "gray")
+        st.markdown(f":{color}[**{flag.severity.upper()}** — {flag.message}]")
+        with st.expander("Evidence for this flag"):
+            st.write(flag.evidence)
+            if flag.span:
+                st.caption(f"Matched text: {flag.span!r}")
+            if flag.related_creative_ids:
+                st.caption(f"Related: {', '.join(flag.related_creative_ids)}")
+
+
+def live_mode_allowed() -> bool:
+    """W6.1b: live generation is gated behind a password when deployed.
+
+    Locally (no deploy secrets configured) live mode is simply on. On the
+    deployed app it requires `st.secrets["demo_password"]`, so no
+    unauthenticated visitor can spend API credits.
+    """
+    try:
+        expected = st.secrets["demo_password"]
+    except Exception:
+        return True  # no deploy secrets present -> local dev
+
+    if st.session_state.get("live_unlocked"):
+        return True
+    supplied = st.sidebar.text_input("Demo password", type="password")
+    if supplied and supplied == expected:
+        st.session_state["live_unlocked"] = True
+        return True
+    return False
