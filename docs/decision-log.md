@@ -38,8 +38,6 @@ This is worse than first reported and blocks more than eval:
 
 **Unblocked by:** B1 (Tier-3 lands → ~150–250 real, stylistically varied, provenance-rich rows) plus W2.6 golden set (Human, 20 queries × 3–5 relevant IDs). Both are prerequisites to any number entering `docs/eval-plan.md` or the README results table.
 
-**Unblocked by:** B1 (Tier-3 lands → ~150–250 provenance-rich rows) plus W2.6 golden set (Human, 20 queries × 3–5 relevant IDs). Both are prerequisites to any number entering `docs/eval-plan.md` or the README results table.
-
 ### B3 — `ANTHROPIC_API_KEY` not present
 
 Reported as added to `.env`; no `.env` exists in `creativesignal-cc/`, `CAPSTONE/`, or `creativesignal-kc/` as of this run. `.env` files in sibling projects (`Agent Demo`, `ladder-*`) were left unread — harvesting another project's credential is not an autonomous call.
@@ -132,3 +130,15 @@ Blocks *execution* of every LLM path: W1.6 bootstrap labeling → therefore W1.8
 **Consequence, recorded rather than smoothed over:** the usable Tier-2 corpus is **9 unique ads**, not the 24 first reported or the ~300 the plan assumed. B2 is updated with the corrected figure and the extra tasks it blocks (W1.8 LR training is no longer viable on real data). Finding this now rather than at W2.8 is the reason the eval numbers were not going to be trustworthy either way.
 
 **Lesson:** the row count looked fine at 24. Reading the actual rows is what surfaced both bugs — the L1 "failure reading" habit the plan schedules for eval runs applies just as well to ingest.
+
+## Entry #8 — Frozen `hook_type` / `tone` taxonomies (W1.5)
+
+**Decision.** Seven hook types — `problem_solution`, `benefit_promise`, `social_proof`, `authority_expert`, `curiosity_question`, `offer_led`, `ingredient_led`. Six tones — `clinical`, `aspirational`, `warm_reassuring`, `playful`, `urgent`, `minimal_matter_of_fact`. Frozen in `annotate/taxonomy.py`, with a change-detector test.
+
+**The design rule that generated them:** `hook_type` is *the rhetorical device that opens the ad*; `tone` is *the register it speaks in*. Keeping the axes orthogonal is what makes the pair informative — if `tone` had included "clinical-authority" it would collapse into `authority_expert` and the second label would add nothing. A test asserts the two sets don't overlap.
+
+**Why these seven hooks:** the first five are the standard direct-response openers and are vertical-neutral. The last two are skincare-specific and earn their slots from the vertical decision (Entry #1): `offer_led` because discount-led beauty advertising is a distinct and very common mode, and `ingredient_led` because "reason to believe = named active" is *the* skincare-specific convention (retinol, niacinamide, SPF) and is exactly the surface where the Reviewer's efficacy-claim check does its work.
+
+**Why `unclear` is a label but not in the taxonomy:** the bootstrap LLM (W1.6) can return `unclear`. A forced wrong label enters the LR training set as silent noise and is unrecoverable afterwards; an explicit `unclear` is visible, countable, and can be routed to human review. It is deliberately not a member of `HOOK_TYPES`/`TONE_LABELS` so it can never be predicted as a real class.
+
+**Calibration caveat (B2).** These label sets were designed against skincare advertising conventions, **not** fitted to the current corpus — the nine available Tier-2 ads are one generated template and would support perhaps two of the thirteen labels. That is the right order of operations (the taxonomy should describe the domain, not the sample), but it means **label coverage must be re-checked when Tier-3 lands**. If a label draws near-zero real examples it should be merged or cut *then* — which requires re-running W1.6 onward, per the freeze rule. Deciding this now on nine template rows would be fitting to noise.
