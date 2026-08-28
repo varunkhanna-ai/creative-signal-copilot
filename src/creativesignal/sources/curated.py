@@ -59,7 +59,19 @@ class CuratedCorpusConnector(CreativeSource):
         active = (filters or SearchFilters()).as_dict()
         creative_clauses, params = [], []
         for key in _CREATIVE_FILTERS:
-            if key in active:
+            if key not in active:
+                continue
+            if key == "platform":
+                # `platform` holds a comma-separated Ad Library placement list
+                # ("FACEBOOK,INSTAGRAM,MESSENGER"), so equality never matches a
+                # single platform name — filtering on "facebook" silently
+                # returned nothing. Match membership on comma boundaries
+                # instead, case-insensitively. See Entry #28.
+                creative_clauses.append(
+                    "(',' || UPPER(c.platform) || ',') LIKE ('%,' || UPPER(?) || ',%')"
+                )
+                params.append(str(active[key]).strip())
+            else:
                 creative_clauses.append(f"c.{key} = ?")
                 params.append(active[key])
 

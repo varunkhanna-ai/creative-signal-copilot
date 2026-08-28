@@ -216,3 +216,49 @@ def test_parse_concepts_skips_malformed_entries_without_losing_good_ones():
         '"cited_creative_ids": ["x"]}]'
     )
     assert [c.title for c in concepts] == ["Good"]
+
+
+def test_platform_filter_matches_within_a_placement_list(tmp_path):
+    """Regression (Entry #28): `platform` is a comma-separated Ad Library
+    placement list, so equality never matched a single platform name —
+    filtering on "facebook" silently returned nothing."""
+    db = tmp_path / "corpus.sqlite"
+    build_corpus(db)
+    insert_creatives(
+        [
+            Creative(
+                creative_id="t3_multi",
+                source_type="tier3",
+                advertiser="CeraVe",
+                platform="FACEBOOK,INSTAGRAM,MESSENGER",
+                category="moisturizer",
+                headline="Daily moisturizer",
+                body_copy="Ceramides restore your skin barrier.",
+                date_observed=date(2026, 7, 26),
+                rights_note="ad-library copy only",
+            )
+        ],
+        db,
+    )
+    source = CuratedCorpusConnector(db)
+    for name in ("facebook", "FACEBOOK", "instagram", "messenger"):
+        assert len(source.all_creatives(SearchFilters(platform=name))) == 1, name
+    assert source.all_creatives(SearchFilters(platform="tiktok")) == []
+
+
+def test_platform_filter_does_not_match_a_partial_token(tmp_path):
+    """"face" must not match "FACEBOOK" — comma boundaries, not substrings."""
+    db = tmp_path / "corpus.sqlite"
+    build_corpus(db)
+    insert_creatives(
+        [
+            Creative(
+                creative_id="t3_x", source_type="tier3", advertiser="A",
+                platform="FACEBOOK,INSTAGRAM", category="serum",
+                headline="h", body_copy="b", date_observed=date(2026, 7, 26),
+                rights_note="n",
+            )
+        ],
+        db,
+    )
+    assert CuratedCorpusConnector(db).all_creatives(SearchFilters(platform="face")) == []

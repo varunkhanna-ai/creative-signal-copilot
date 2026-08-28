@@ -456,3 +456,18 @@ The strongest rule: *among the 9 ingredient-led ads, 8 fall in the high longevit
 **Fix 3 — numeric conditions render as English.** `platform count <= 4.5` became the ungrammatical "platform is count <= 4.5" because the categorical humanizer ran first. Numeric features are now phrased before the categorical rules: "the ad runs on 4 or fewer placement surfaces", "the body is longer than 18 words".
 
 **Why these matter beyond tidiness.** The tree's deliverable is *sentences a human reads and repeats*. A rule that is unreadable will be ignored; a rule that is readable and **wrong** is worse — it gets repeated. The honesty enforcement in this module was aimed at performance vocabulary, and it caught none of these, because all three were accuracy failures rather than claim failures.
+
+## Entry #28 — Platform filter never matched a single platform name (W2.5, debugging)
+
+**Symptom.** Filtering the corpus on `platform="facebook"` returned **0 creatives**, silently, despite 95 of 104 rows being Facebook placements. Typing "facebook" into the explore page's sidebar filter produced an empty result set with a helpful-sounding "no matches" message.
+
+**Cause.** The real Ad Library `platform` field is a comma-separated *placement list* — `FACEBOOK,INSTAGRAM`, `FACEBOOK,INSTAGRAM,AUDIENCE_NETWORK,MESSENGER,THREADS` — not a single value. `all_creatives` filtered with `platform = ?`, so only an exact match on the full list string could ever succeed. `parse_filters` maps "meta" and "facebook" to `facebook`, so the natural-language filter path was broken too.
+
+**Fix.** Match membership on comma boundaries, case-insensitively:
+`(',' || UPPER(platform) || ',') LIKE ('%,' || UPPER(?) || ',%')`. Boundaries rather than a bare substring, so `"face"` does not match `FACEBOOK` — asserted in a test.
+
+Verified after the fix: facebook 95, instagram 95, messenger 38, threads 38, tiktok 0, unknown 9.
+
+**Why it went unnoticed.** Every test used single-value platforms (`"facebook"`, `"unknown"`), because they were written before real Tier-3 data existed. The fixtures encoded an assumption about the data's *shape* that the real data violated — the same class of miss as the `variant_count` constant (Entry #23) and the `platform` one-hot in the tree (Entry #27). All three surfaced only on contact with real curation.
+
+**Pattern worth stating once:** three separate bugs this session came from the same root — code written against an imagined schema, tested against fixtures built from the same imagination. Tests passing meant "consistent with my assumptions," not "correct." Only real data could distinguish those, and it disagreed three times.
