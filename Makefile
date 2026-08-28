@@ -25,7 +25,7 @@ app:
 	streamlit run app/streamlit_app.py
 
 mcp:
-	@echo "mcp: not yet implemented"
+	python mcp_server/server.py
 
 test:
 	pytest

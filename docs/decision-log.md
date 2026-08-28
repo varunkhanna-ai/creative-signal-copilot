@@ -292,3 +292,55 @@ Copy addressing protected attributes or implying a health condition: age-shaming
 Banned in rule text: *performs, works, converts, wins, drives, best, effective, successful*. A test asserts none of these appear in generated rule sentences, so the honesty framing is enforced mechanically rather than by reviewer discipline.
 
 **Status: cannot be trained.** Tier-3 does not exist (B1), so there is no label column. The module is built and unit-tested against a synthetic frame; it has never seen real data. `train_tree` refuses rather than fitting on too few rows, for the same reason the annotator does.
+
+## Entry #18 — MCP tool contracts (W5.1 walkthrough)
+
+**Four read-only tools.** Note the §9 MCP tool list differs from the five *agent* tools — `get_category_stats` and `generate_evidence_report` are MCP-specific, because an external coding agent wants corpus-level orientation and a citable summary, not the app's internal concept pipeline.
+
+| Tool | Input | Output |
+|---|---|---|
+| `search_creatives` | `query: str`, `limit: int = 5`, optional `source_type` / `platform` | Ranked hits: creative_id, headline, body, advertiser, platform, source_url, score, matched_via — plus a coverage statement |
+| `get_creative_details` | `creative_id: str` | Full source record, its annotations (with `annotator`), analyst summary if present |
+| `get_category_stats` | optional `category` | Counts by tier / platform / hook_type / tone, rights-note coverage %, and the corpus caveat |
+| `generate_evidence_report` | `query: str`, `limit: int = 8` | Retrieved IDs, prevalence patterns, coverage statement, honesty rule — no LLM call |
+
+**Read-only guarantee, enforced three ways** (AGENTS.md: "No writes from the MCP server"):
+1. The server imports only query functions; no `save_*`, `insert_*`, or `write_*` symbol is imported.
+2. Its SQLite connections open with the `file:...?mode=ro` URI, so a write attempt fails at the driver rather than relying on discipline.
+3. A test asserts a write through the server's own connection raises `OperationalError`.
+
+**`generate_evidence_report` makes no LLM call.** It assembles retrieval output and prevalence counts deterministically. Two reasons: the MCP server must work with no API key (matching the retrieval-needs-no-key rule), and a tool that silently spends the user's tokens when called from someone else's coding agent is a bad citizen. The "report" is evidence assembly, not generation — and it is named to say so.
+
+**Every tool output carries the coverage statement and the honesty rule.** The MCP surface is the one place output travels *outside* our UI, where the footer we control is absent. The framing has to ride along in the payload or it is lost exactly where it matters most.
+
+## Entry #19 — Pydantic version squeeze between mcp and phoenix (W5.2, debugging)
+
+**Symptom.** Importing the MCP server raised, at *class-definition* time:
+
+```
+RuntimeError: Unable to apply constraint 'host_required' to schema of type 'function-wrap'
+```
+
+**Cause.** A three-way version squeeze on a single shared dependency:
+- `mcp` 1.6.0 uses an `AnyUrl` constraint that **pydantic 2.10.0** cannot apply (fixed later in the 2.10 line).
+- Upgrading to **pydantic 2.11.9** fixed `mcp` but broke `strawberry-graphql` (a Phoenix dependency), which imports `pydantic._internal._typing_extra.is_new_type` — removed in 2.11.
+
+So 2.10.0 breaks the MCP server and 2.11.x breaks tracing. Rather than ping-pong, I tested candidate versions against **both** imports at once and pinned the one that satisfies both: **`pydantic==2.10.6`**.
+
+**Lesson, and it is the same one as Entry #6.** This is the second time an *unpinned or wrongly-pinned shared dependency* has broken a subsystem far from where the version was chosen. Both times the failure surfaced as "the new module is broken" rather than "the pin is wrong." Two libraries pinned exactly (`mcp`, `arize-phoenix`) still left a shared transitive dependency free to be wrong for one of them. **A lockfile at W6.1 is now a real deliverable, not a nicety** — a grader running `pip install -e .` today can still resolve a different pydantic than this one.
+
+## Entry #20 — Vector search has no relevance floor (W5.2, known limitation)
+
+**Observed.** An off-topic query still returns the corpus's nearest neighbours. Measured raw cosine on the top-3, same index:
+
+| Query | Top-3 raw cosine |
+|---|---|
+| "gentle cleanser for sensitive skin" | 0.673, 0.665, 0.662 |
+| "cryptocurrency derivatives trading" | 0.595, 0.593, 0.563 |
+| "how to fix a bicycle" | 0.434, 0.433, 0.431 |
+
+Raw similarity *does* separate relevance. But two things make it look more confident than it is: vector search returns k neighbours regardless of relevance, and per-query min-max normalization (Entry #10) maps the best result to **1.0 every time** — including when the best result is junk.
+
+**Decision: do not add a similarity floor yet.** The gap between genuinely relevant (0.67) and off-topic-but-plausible (0.59) is ~0.08. Picking a cutoff in that band without a golden set (B2) would be tuning on three hand-picked queries, and a floor set slightly too high silently returns nothing for real queries — a worse failure than returning weak results with an honest coverage statement. This is the same reasoning as Entry #9's threshold: pick it when there is data to pick it from.
+
+**Mitigation in the meantime.** The coverage statement travels with every result set (including through MCP), and the UI states that the score is retrieval similarity rather than evidence of performance. **When the golden set exists, sweep the floor alongside `SEMANTIC_WEIGHT` in W2.8 and record the chosen value here.**
