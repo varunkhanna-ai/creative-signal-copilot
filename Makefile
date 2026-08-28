@@ -16,7 +16,7 @@ index:
 	python -m creativesignal.retrieval.index
 
 eval:
-	@echo "eval: not yet implemented"
+	python -m creativesignal.eval.run_eval
 
 slice:
 	python -m creativesignal.slice $(if $(BRIEF),--brief "$(BRIEF)",)
