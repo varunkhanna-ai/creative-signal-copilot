@@ -16,7 +16,7 @@ eval:
 	@echo "eval: not yet implemented"
 
 slice:
-	@echo "slice: not yet implemented"
+	python -m creativesignal.slice $(if $(BRIEF),--brief "$(BRIEF)",)
 
 app:
 	@echo "app: not yet implemented"
