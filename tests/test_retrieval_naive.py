@@ -85,9 +85,40 @@ def test_search_ranks_term_overlap_first(corpus):
     assert results[0].retrieved_by == "bm25"
 
 
-def test_search_returns_no_zero_score_matches(corpus):
-    """Zero overlap is "no match", not a weak match worth showing."""
+def test_search_returns_nothing_without_term_overlap(corpus):
+    """No shared terms is "no match"."""
     assert corpus.search("cryptocurrency trading platform") == []
+
+
+def test_matches_survive_negative_bm25_scores(tmp_path):
+    """Regression (Entry #16): BM25 IDF goes negative on common terms.
+
+    When every document contains the query terms, BM25Okapi scores them all
+    below zero. Filtering on `score > 0` dropped genuine matches entirely —
+    on a small corpus this silently returned nothing.
+    """
+    db = tmp_path / "corpus.sqlite"
+    build_corpus(db)
+    insert_creatives(
+        [
+            Creative(
+                creative_id=f"c{i}",
+                source_type="tier2",
+                advertiser="synthetic (no advertiser)",
+                platform="unknown",
+                category="skincare",
+                headline=f"Gentle Cleanser {i}",
+                body_copy="A gentle daily cleanser for sensitive skin.",
+                date_observed=date(2026, 8, 28),
+                rights_note="local use only",
+            )
+            for i in range(5)
+        ],
+        db,
+    )
+    results = CuratedCorpusConnector(db).search("gentle cleanser", limit=5)
+    assert len(results) == 5, "identical docs all match; none should be dropped"
+    assert all(r.score < 0 for r in results), "precondition: scores are negative here"
 
 
 def test_search_respects_the_limit(corpus):

@@ -220,3 +220,52 @@ Not torch at all — **PyArrow**. Arrow's bundled **mimalloc** allocator segfaul
 **Decision:** the explore page wraps its search box in `st.form` with an explicit **Search** button.
 
 **Why:** a bare `st.text_input` re-runs the script on every keystroke, and each run triggers an embedding pass over the query — visibly laggy and wasteful. The form defers the run until submit. It is also more discoverable than Streamlit's small "Press Enter to apply" hint, and it gives the demo a clickable target rather than a keypress.
+
+## Entry #14 — Analyst agent loop bounds (W3.1 walkthrough)
+
+**Shipping the V0 from Section 4: a fixed pipeline, not a dynamic agent.** The tools are called in a set order with a coverage check and a structured trace at every step. Dynamic tool ordering is the stretch and is not scheduled.
+
+**Why fixed order is the right V0 here, not just the cheap one:** the product's claim is explainability. A fixed pipeline produces the same trace shape every run, which means the "How this was produced" expander is legible and the eval harness compares like with like across runs. A dynamic agent that picks its own tool order would make each run's trace a different shape and turn every eval regression into "did the pipeline change or did the model choose differently?" — a debugging cost with no user-visible benefit at this corpus size.
+
+**The bounds:**
+
+- **`MAX_TOOL_CALLS = 8`.** The fixed pipeline uses five. The headroom absorbs one retry and one clarification round without allowing a runaway loop. Exceeding it raises rather than truncating silently — a partial report that looks complete is worse than an error.
+- **`MIN_COVERAGE = 3` retrieved creatives.** Below three, no honest prevalence statement is possible: "appears in 2 of 2 examples" reads as a pattern but is noise. Under the floor the agent returns a report that *states the coverage gap as its finding* rather than inventing patterns — the honest failure mode, and the one the honesty rule demands.
+- **Clarifying question:** asked when the brief names no product category and no audience. Exactly one round, then it proceeds with what it has. Repeated clarification is a worse experience than a caveated answer, and an agent that can loop on questions can hang the demo.
+- **Self-check before returning:** every cited ID must appear in the retrieved set. Uncited or wrongly-cited claims are dropped, not flagged — the honesty rule is a gate, not a warning label. This is the same rule `citation_correctness` (W4.8) measures, applied at generation time rather than only in eval.
+
+**Trace object:** every step records tool name, inputs, output summary, and duration. It feeds both the UI expander and Phoenix (W3.4), from one structure — two renderings of one trace, never two separately-maintained logs that can disagree.
+
+## Entry #15 — Reviewer flag rules (W3.7 draft, W4.4 finalized)
+
+Four checks. Two are deterministic (no LLM, no key, always runnable); two use the LLM. The V0 in Section 4 is the two that create demo moments — unsupported claims and similarity — and both are implemented deterministically first so the reviewer works with no API key at all.
+
+**1. Unsupported efficacy / health claim — severity `claim` (red).**
+Triggers on regulated skincare claim language: `clinically proven`, `dermatologist tested/recommended`, `FDA approved`, `cures`, `heals`, `eliminates`, `permanent`, `medical grade`, `reverses`, `repairs damage`, plus quantified outcome claims (`reduces wrinkles by 47%`, `results in 7 days`).
+
+A claim is **flagged unless it is supported by a cited retrieved creative that makes the same claim**. That is the load-bearing rule: the reviewer isn't asking "is this true?" — it has no way to know — it is asking "does the evidence this concept cites actually contain this claim?" An unsupported claim is a claim the generator invented, which is precisely the honesty-rule violation. Evidence on expand shows the matched span and which cited creative was checked.
+
+**2. Similarity to a retrieved ad — severity `similarity` (amber).**
+Token-level Jaccard over the concept's headline+body vs. each retrieved creative's copy. **Threshold 0.6** (W4.4). Above it, the concept is close enough to a real ad to raise a plagiarism/derivative concern worth a human's attention. Chosen deliberately conservative — this flag is advisory (amber, non-blocking), so a false positive costs a glance while a false negative could ship a near-copy of a real advertiser's ad. Jaccard rather than embedding similarity because it is explainable in one sentence and the overlapping tokens can be *shown* as the evidence.
+
+**3. False scarcity — severity `claim` (red).**
+`limited stock`, `only N left`, `today only`, `last chance`, `ends tonight`, countdown language — flagged when the brief supplies no actual promotion window. Note for the demo: **every one of the nine corpus ads contains "Limited stock"** (B2), so on the current corpus this check flags essentially everything. That is a corpus artifact, not a reviewer bug, and the flag text says so.
+
+**4. Prohibited targeting language — severity `claim` (red).**
+Copy addressing protected attributes or implying a health condition: age-shaming, skin-tone targeting, `for problem skin`, appearance-based inadequacy framing. Deliberately narrow, since over-flagging ordinary skincare vocabulary would make the reviewer noise.
+
+**Design rule across all four:** every flag carries `evidence` as a required schema field — the matched span and why it matched. A flag a reviewer can't justify on expand is an unexplainable judgment, which is what this project exists to avoid. `severity` drives colour only; `passed` is false if any `claim`-severity flag exists, so amber similarity never blocks.
+
+## Entry #16 — BM25 negative scores silently dropped valid matches (W3.3, debugging)
+
+**Symptom.** An analyst-agent test failed the coverage gate: a query that obviously matched every document in its fixture retrieved **zero** results.
+
+**Root cause.** `rank_bm25`'s `BM25Okapi` computes IDF as `log((N - n + 0.5) / (n + 0.5))`, which goes **negative** once a term appears in more than roughly half the documents. `CuratedCorpusConnector.search` filtered results with `if score > 0`, on the reasoning that "a zero score means no term overlap." That reasoning is wrong: a *negative* score means the term is common, not that it is absent. Every match on a common word was being discarded.
+
+**Why it mattered on this project specifically.** With a 9-row corpus (B2), "common" arrives almost immediately — measured on the real corpus, `"experience"` and `"limited stock"` appear in **9 of 9** documents and `"skin"` in 7 of 9. The bug's blast radius grows as the corpus shrinks, which is exactly the wrong direction, and it would have looked like "hybrid retrieval is weak" rather than "keyword retrieval is broken."
+
+**Fix.** Decide relevance by **actual term overlap** between the query and the document, and use the BM25 score only for *ranking* among those candidates — including when it is negative. Ordering is unaffected (BM25 remains monotone in relevance); only the inclusion test changed. Ties break on `creative_id` so eval reruns are deterministic.
+
+**Test.** `test_matches_survive_negative_bm25_scores` builds five identical documents, asserts all five are returned, and asserts as a precondition that their scores really are negative — so the regression cannot be "fixed" by a change that merely makes the scores positive.
+
+**Lesson.** The failing test was in the *agent* layer, three modules above the bug. The coverage gate (Entry #14) is what surfaced it: a retriever returning nothing looked, from inside the agent, exactly like a legitimately thin corpus. A guard designed for honesty caught a correctness bug — worth noting, since the temptation with a small corpus is to assume every empty result is a data problem.

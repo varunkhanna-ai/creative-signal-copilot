@@ -116,11 +116,20 @@ class CuratedCorpusConnector(CreativeSource):
         if not tokens:
             return []
         scores = self._bm25.get_scores(tokens)
-        ranked = sorted(
-            zip(self._indexed, scores), key=lambda pair: pair[1], reverse=True
-        )
+        query_tokens = set(tokens)
+
+        # Relevance is decided by actual term overlap, NOT by the sign of the
+        # BM25 score. BM25Okapi's IDF term, log((N-n+0.5)/(n+0.5)), goes
+        # NEGATIVE once a term appears in more than about half the corpus — so
+        # on a small corpus a genuine match on a common word scores below zero.
+        # Filtering on `score > 0` silently dropped those. See Entry #16.
+        candidates = [
+            (creative, float(score))
+            for creative, score in zip(self._indexed, scores)
+            if query_tokens & set(tokenize(self._document(creative)))
+        ]
+        candidates.sort(key=lambda pair: (-pair[1], pair[0].creative_id))
         return [
-            SearchResult(creative=creative, score=float(score), retrieved_by="bm25")
-            for creative, score in ranked[:limit]
-            if score > 0  # a zero score is "no term overlap", not a weak match
+            SearchResult(creative=creative, score=score, retrieved_by="bm25")
+            for creative, score in candidates[:limit]
         ]
