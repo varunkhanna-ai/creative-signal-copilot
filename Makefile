@@ -1,4 +1,7 @@
-.PHONY: ingest annotate index eval slice app mcp test
+.PHONY: download ingest annotate index eval slice app mcp test
+
+download:
+	python -m creativesignal.ingest.download
 
 ingest:
 	python -m creativesignal.ingest.build_corpus
