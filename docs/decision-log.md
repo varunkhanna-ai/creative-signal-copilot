@@ -408,3 +408,37 @@ Three issues in the delivered curation, all handled at load rather than by editi
 3. **Heavy duplicate copy is real and is left alone.** Only 39 distinct `body_copy` texts across 93 non-empty rows. Unlike the Tier-2 case (Entry #7), these are **genuinely different ads**: distinct `ad_library_url`, distinct `start_date`, distinct `days_active`. Deduplicating them would destroy real observations and bias the proxy distribution. Noted here because it inflates apparent prevalence — five ads sharing one line of copy is one *creative idea* appearing five times, and any prevalence count over Tier-3 should be read with that in mind.
 
 Post-load corpus: **104 creatives** (95 Tier-3 + 9 Tier-2), 95 with resolvable source links, 98 with usable ad copy.
+
+## Entry #25 — Classes with one example are dropped, not trained (W1.8)
+
+**Finding.** The real bootstrap produced `authority_expert: 1` — a single authority-led ad in 98. The training guard refused the whole axis.
+
+**Decision.** Drop classes below `MIN_ROWS_PER_CLASS` (2) from training and **report them**, rather than refusing the axis entirely. Five of seven hook types are learnable; discarding all of them because one is not would be the wrong trade.
+
+**Why dropping beats keeping.** A single-example class cannot be stratified across CV folds, so it makes honest evaluation impossible. Worse, a classifier nominally "trained" on it would predict it essentially never while still inflating the apparent class count — the model would look like it covers seven hooks when it covers five.
+
+**Why this is safe.** A dropped class does not vanish from the system: the classifier cannot predict it, so any such ad falls below the confidence threshold and **escalates to the LLM**, which can still label it. The two-stage design absorbs the gap by construction. The drop is printed at training time, not swallowed.
+
+**Watch item.** `authority_expert` being near-absent is itself notable, since authority framing ("dermatologist recommended") is a defining skincare convention and the Reviewer's claim check targets exactly that language. Either the curated sample under-represents it or the bootstrap prompt is under-assigning it. Worth checking during W1.7 human verification.
+
+## Entry #26 — Escalation threshold recalibrated to 0.35 (W1.9, supersedes Entry #9)
+
+Entry #9 set 0.70 as a defensible prior with no data. The real out-of-fold threshold table:
+
+| thresh | hook escal% | hook acc@kept | tone escal% | tone acc@kept |
+|---|---|---|---|---|
+| 0.00 | 0.0% | 90.5% | 0.0% | 79.6% |
+| 0.30 | 9.5% | 94.2% | 16.3% | 87.8% |
+| **0.35** | **18.9%** | **98.7%** | **41.8%** | **98.2%** |
+| 0.40 | 37.9% | 100.0% | 57.1% | 100.0% |
+| 0.70 | 92.6% | 100.0% | 98.0% | 100.0% |
+
+**0.70 was badly wrong.** It escalates 93–98% of rows — the classifier would handle almost nothing and the two-stage design would collapse into "always call the LLM," paying full cost for no benefit. This is exactly why Entry #9 flagged it as a placeholder rather than a result.
+
+**Decision: 0.35.** It is the lowest threshold clearing a 95% accuracy-on-kept bar on *both* axes (98.7% / 98.2%). Below it, accuracy on kept rows falls off quickly (0.30 → 87.8% on tone); above it, escalation climbs steeply for a gain of at most 1.8 points.
+
+**Baseline model quality, measured out-of-fold:** hook_type **90.5%** accuracy (macro F1 0.88), tone **79.6%** (macro F1 0.81), n=95/98. Tone is the weaker axis and drives the per-row escalation rate, since escalation triggers on `min(hook, tone)`.
+
+**Two escalation rates, and the difference matters.** Running the full corpus at 0.35 gave **5.1%** (5 of 98 escalated). That number is **in-sample** — the deployed model was fit on the same seed it is now labeling, so it is over-confident on rows it has already seen. The **out-of-fold** table above is the honest production estimate: roughly **40%**, driven by tone. Report 40% as the expected rate and 5.1% only as what this specific re-labeling run cost. Quoting 5.1% as a production figure would overstate the cost saving by roughly 8x.
+
+**Cost so far:** $0.105 total for 98 bootstrap labels plus 5 escalations (Haiku), logged per call in `eval/cost_log.csv`.

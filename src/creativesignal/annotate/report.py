@@ -13,7 +13,7 @@ from pathlib import Path
 from creativesignal.annotate.classical import predict_with_confidence
 
 CONFUSION_PNG = Path("eval/results/confusion_{axis}.png")
-CANDIDATE_THRESHOLDS = (0.0, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)
+CANDIDATE_THRESHOLDS = (0.0, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.50, 0.60, 0.70)
 
 
 @dataclass
@@ -36,7 +36,11 @@ def cross_val_predictions(rows: list, axis: str, folds: int = 5):
     import numpy as np
     from sklearn.model_selection import StratifiedKFold
 
-    from creativesignal.annotate.classical import _build_pipeline, _text_of
+    from creativesignal.annotate.classical import (
+        _build_pipeline,
+        _text_of,
+        drop_unlearnable_classes,
+    )
     from creativesignal.annotate.taxonomy import UNCLEAR_LABEL
 
     pairs = [
@@ -44,8 +48,12 @@ def cross_val_predictions(rows: list, axis: str, folds: int = 5):
         for r in rows
         if getattr(r, axis) != UNCLEAR_LABEL and _text_of(r.headline, r.body_copy)
     ]
-    texts = np.array([t for t, _ in pairs])
-    labels = np.array([l for _, l in pairs])
+    # Same class filter as training, so CV evaluates what was actually fit.
+    t_list, l_list, _ = drop_unlearnable_classes(
+        [t for t, _ in pairs], [l for _, l in pairs], axis
+    )
+    texts = np.array(t_list)
+    labels = np.array(l_list)
 
     counts = {label: int((labels == label).sum()) for label in set(labels.tolist())}
     n_splits = max(2, min(folds, min(counts.values())))

@@ -82,12 +82,30 @@ def _check_trainable(texts: list[str], labels: list[str], axis: str) -> None:
         raise InsufficientTrainingData(
             f"{axis}: only one class present ({list(counts)}). Nothing to learn."
         )
-    thin = {label: n for label, n in counts.items() if n < MIN_ROWS_PER_CLASS}
-    if thin:
-        raise InsufficientTrainingData(
-            f"{axis}: class(es) with fewer than {MIN_ROWS_PER_CLASS} examples: "
-            f"{thin}. Stratified evaluation is impossible."
-        )
+
+
+def drop_unlearnable_classes(
+    texts: list[str], labels: list[str], axis: str
+) -> tuple[list[str], list[str], dict[str, int]]:
+    """Remove classes with too few examples to learn or evaluate.
+
+    A class with one example cannot be stratified across CV folds, and a
+    classifier "trained" on it would predict it essentially never while
+    inflating the apparent class count. Dropping is honest; the dropped
+    classes are returned so callers can report them rather than lose them
+    silently. See decision-log Entry #25.
+    """
+    from collections import Counter
+
+    counts = Counter(labels)
+    dropped = {l: n for l, n in counts.items() if n < MIN_ROWS_PER_CLASS}
+    if not dropped:
+        return texts, labels, {}
+    kept = [(t, l) for t, l in zip(texts, labels) if l not in dropped]
+    if not kept:
+        return [], [], dropped
+    kept_texts, kept_labels = map(list, zip(*kept))
+    return kept_texts, kept_labels, dropped
 
 
 def train_axis(rows: list, axis: Axis):
@@ -106,6 +124,13 @@ def train_axis(rows: list, axis: Axis):
     if not pairs:
         raise InsufficientTrainingData(f"{axis}: no usable rows after filtering.")
     texts, labels = map(list, zip(*pairs))
+    texts, labels, dropped = drop_unlearnable_classes(texts, labels, axis)
+    if dropped:
+        print(
+            f"  {axis}: dropped class(es) with < {MIN_ROWS_PER_CLASS} examples: "
+            f"{dropped}. The classifier cannot predict these — every such row "
+            f"will fall below threshold and escalate to the LLM."
+        )
     _check_trainable(texts, labels, axis)
     pipeline = _build_pipeline()
     pipeline.fit(texts, labels)

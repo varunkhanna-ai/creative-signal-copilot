@@ -23,10 +23,11 @@ from creativesignal.schema import Annotation
 
 DB_PATH = Path("data/corpus.sqlite")
 
-# W1.9 decision — see decision-log Entry #9. Deliberately a module constant
-# and not a tunable parameter: it is a product decision with a cost
-# consequence, so changing it should be a reviewable diff.
-CONFIDENCE_THRESHOLD = 0.70
+# W1.9 decision, RECALIBRATED against the real threshold table — see
+# decision-log Entry #26 (which supersedes the placeholder in Entry #9).
+# Deliberately a module constant and not a tunable parameter: it is a product
+# decision with a cost consequence, so changing it should be a reviewable diff.
+CONFIDENCE_THRESHOLD = 0.35
 
 ANNOTATOR_LOGREG = "logreg"
 ANNOTATOR_LLM = HAIKU_MODEL
