@@ -4,55 +4,27 @@
 
 *Running note. Each entry states what is blocked, what unblocks it, and what was built anyway so the blocker is the only remaining gap.*
 
-### B1 — Tier-3 corpus does not exist (blocks W3.6, all eval numbers)
+### ~~B1 — Tier-3 corpus does not exist~~ — RESOLVED
 
-`docs/tier3_review_sheet.xlsx` was reported as existing with only `category` / `rights_note` blank. It does not exist — not in this worktree, not in `CAPSTONE/`, not in `creativesignal-kc/`, not anywhere under Desktop or Downloads. The only related file is `~/Downloads/tier3_curation_template.xlsx`: correct 14-column header, exactly **one** row (a CeraVe example whose `notes` column reads "Example row — replace with real curated data. Delete before use").
+`data/raw/tier3_meta_sample.csv` landed: **95 real curated rows**, scope logged in Entry #22. Loaded, recalibrated (Entry #23), and the tree now trains on it (Entry #27). Corpus is **104 creatives** (95 Tier-3 + 9 Tier-2), 95 with resolvable source links.
 
-W0.3 was never done. Consequences:
+**Not fully clean — kept visible rather than smoothed over:** `variant_count` is a constant 20 across every row (Entry #23, likely a scrape artifact or page-size cap — worth re-curating if real per-ad counts can be recovered); 4 rows carried an unrendered `{{product.brand}}` template placeholder in `body_copy` (Entry #24, handled at load); `category` needed normalization for case and one typo (Entry #24); only 39 distinct ad-copy texts across 93 non-empty Tier-3 rows — genuinely different ads (distinct URLs, dates, durations) sharing repeated creative copy, left as-is since deduping would destroy real observations (Entry #24).
 
-- **W1.4** target is ~300 rows (all Tier-3 + a Tier-2 sample). Tier-3 contributes 0. Actual load is Tier-2 only — see B2.
-- **W3.6 (insight tree) cannot run.** Per F1 the tree trains only on Tier-3; with no rows there is no `proxy_bucket` label column at all. Code is built and unit-tested against a synthetic frame; it has never been trained on real data.
-- **Provenance fields are unpopulated corpus-wide.** Tier-3 is the only tier carrying `ad_library_url`, real `rights_note`, and the F1 proxy fields (`days_active`, `variant_count`, `proxy_bucket`).
+### ~~B2 — Tier-2 corpus too small~~ — SUPERSEDED
 
-**Not worked around deliberately.** Generating 100–200 plausible skincare records would fabricate advertisers, ad-library URLs, and observation dates in a project whose stated spine is "every insight is traceable to examples," and every downstream citation, tree rule, and eval number would then trace to invented data. The honesty rule makes this the one gap that must stay visible rather than be filled.
+Tier-2 is still 9 rows (unchanged, still real), but the corpus this blocked eval on is now 104 rows with Tier-3 present. **Still open: no golden set exists (W2.6, Human).** Retrieval metrics (Recall@5/Precision@5, semantic-vs-hybrid) remain unmeasured — not because the corpus is too small anymore, but because there are no hand-labeled relevance judgments to score against. `make eval` correctly reports "Golden set is empty — nothing to evaluate" rather than fabricating a number. This is the one number in the original plan still genuinely blocked on human work, tracked as new blocker **B5** below.
 
-**Unblocked by:** the human doing W0.3 (2h in plan) and saving to `data/raw/tier3_meta_sample.csv`. `ingest/load_tier3.py` is built, validates against the template's 14 columns, and will pick the file up with no code change.
+### ~~B3 — API key unreachable~~ — RESOLVED
 
-### B2 — Tier-2 yields **9 unique** skincare ads, not ~300 (blocks every eval number, and W1.8)
+`.env` now present in this worktree. Real LLM calls executed: 98 bootstrap labels, 5 escalations, 104 analyst summaries, 6 end-to-end generation runs. Total logged spend **$0.5350** (`eval/cost_log.csv`). One real API compatibility bug found and fixed along the way (Entry #29 — `temperature` deprecated on Sonnet 5).
 
-Measured, then re-measured after two filter bugs were fixed (Entry #7). The honest number is **9**:
+### B5 — Golden set does not exist (blocks all retrieval eval numbers)
 
-| Stage | Rows |
-|---|---|
-| Raw keyword match across both datasets | 24 |
-| After vetoing non-skincare products (clothes irons, garment steamers, hair serum matched on "wrinkle"/"serum") | 16 |
-| After cross-dataset dedupe (the two datasets overlap almost entirely) | **9** |
+W2.6 (Human, 20 queries × 3–5 hand-labeled relevant creative IDs) has not been done. This is now the **only** remaining blocker on retrieval metrics — the corpus (104 rows, real provenance) is no longer the limiting factor. `make eval` is wired, runs against the real 104-row corpus and real indexes, and will produce Recall@5/Precision@5 for keyword-only/semantic-only/hybrid the moment a golden set exists.
 
-The nine: anti-aging serum, eye cream, sunscreen, body scrub, face scrub, moisturizing cream, facial cleanser, exfoliating scrub, CC cream.
+**What is measured instead, honestly scoped:** citation correctness across 6 real end-to-end generation runs (15 concepts) — **1.000**, n=15 concepts. This is a generation-quality metric, not a retrieval metric, and the sample is 6 hand-written briefs, not a golden-set evaluation. See Entry #29.
 
-This is worse than first reported and blocks more than eval:
-
-- **Retrieval metrics are degenerate.** Recall@5 / Precision@5 over a 9-document corpus means a single query retrieves more than half the corpus. W2.8's semantic-vs-hybrid comparison cannot separate the two conditions at this size. **No eval run has been executed and no eval numbers committed.** `make eval` is wired and will run; it is deliberately unrun rather than reported on a corpus that would make the output meaningless.
-- **W1.8 LR training is not viable.** Nine rows across 6–8 `hook_type` classes averages roughly one example per class. There is no train/test split worth making. The classical annotator is built and unit-tested on synthetic data; it has not been trained on the real corpus.
-- **The corpus has near-zero stylistic variance.** All nine follow one generated template — "Experience X! Perfect for Y. Limited stock - Z." Every single row contains "Limited stock," so the W4.5 false-scarcity check would flag 100% of the corpus. A `tone`/`hook_type` classifier trained here would learn one template, not a taxonomy.
-
-**Unblocked by:** B1 (Tier-3 lands → ~150–250 real, stylistically varied, provenance-rich rows) plus W2.6 golden set (Human, 20 queries × 3–5 relevant IDs). Both are prerequisites to any number entering `docs/eval-plan.md` or the README results table.
-
-### B3 — `ANTHROPIC_API_KEY` not readable from this worktree
-
-The `.env` **does exist**, at `/Users/varunmacbook15/Desktop/project/CAPSTONE/.env` — the main checkout. This worktree (`creativesignal-cc/`) has no `.env`, and `python-dotenv` only searches upward from the working directory, so nothing here can load it.
-
-Two attempts to bridge that were **blocked by the sandbox permission classifier**: reading the file's contents, and `cp`-ing it into this worktree. Neither was retried or worked around — a credential file is exactly the thing not to route around a permission denial for. `.env` files in sibling projects (`Agent Demo`, `ladder-*`) were left unread for the same reason.
-
-Blocks *execution* of every LLM path: W1.6 bootstrap labeling → therefore W1.8 LR training and W1.10 escalation (both need bootstrap labels), W2.3 analyst summaries, W3.3 concept generation, W4.3 concepts. Code for all of these is built and unit-tested with the LLM call stubbed; none has run against the live API. (The **reviewer is unaffected** — all four checks are deterministic by design, so W4.5 and the W4.9 planted-violation test run and pass without a key.)
-
-**Unblocked by** — either, from the repo root:
-
-```bash
-cp /Users/varunmacbook15/Desktop/project/CAPSTONE/.env /Users/varunmacbook15/Desktop/project/creativesignal-cc/.env
-```
-
-or make it worktree-independent by exporting it in the shell profile. `.env` is already gitignored here (`.gitignore:1`), verified before any commit.
+**Unblocked by:** W2.6, 20 realistic queries with hand-labeled relevant IDs against the real 104-row corpus. `eval/golden_set.jsonl` still carries only the format spec.
 
 ### B4 — Tier-1 (AdImageNet) is gated (minor, off critical path)
 
@@ -471,3 +443,53 @@ Verified after the fix: facebook 95, instagram 95, messenger 38, threads 38, tik
 **Why it went unnoticed.** Every test used single-value platforms (`"facebook"`, `"unknown"`), because they were written before real Tier-3 data existed. The fixtures encoded an assumption about the data's *shape* that the real data violated — the same class of miss as the `variant_count` constant (Entry #23) and the `platform` one-hot in the tree (Entry #27). All three surfaced only on contact with real curation.
 
 **Pattern worth stating once:** three separate bugs this session came from the same root — code written against an imagined schema, tested against fixtures built from the same imagination. Tests passing meant "consistent with my assumptions," not "correct." Only real data could distinguish those, and it disagreed three times.
+
+## Entry #29 — `temperature` deprecated on Sonnet 5; a zero-concept run traced to its actual cause (W3.3/W4.3, debugging)
+
+**Error 1 — real API rejection.** The first real generation call failed outright: `anthropic.BadRequestError: 400 — 'temperature' is deprecated for this model`. `llm.complete()` always sent `temperature=0.0`. Fixed by making `temperature` optional (`None` by default) and only including it in the request when a caller explicitly asks for it — so Sonnet 5 is called with no temperature override rather than a rejected one. Consequence, stated plainly: generation calls are no longer deterministic (no fixed temperature=0), which is the direct cause of the finding below.
+
+**Finding — one real run produced zero concepts.** Six real briefs were run end to end (`retrieval → concepts → review`). Five produced 3 concepts each; `run_757a37c86163` ("a ceramide moisturizer for dry winter skin") produced 0.
+
+**Traced, not assumed:**
+- Retrieval returned **8 creatives** for this brief — same as every other run, well above the 3-example coverage floor. Retrieval was not the cause.
+- `generate_concepts()` returns `[]` exactly two ways: no evidence resolved (not the case here), or `parse_concepts(response.text)` fails to parse the raw LLM output. The agent's own trace notes log every citation-gate drop, and none appeared for this run — ruling out the self-check gate as the cause.
+- That leaves one possibility: **the raw Sonnet response for that specific call did not parse as the expected JSON array.** Re-running the identical brief, identical retrieval (same 8 IDs), identical prompt moments later produced 3 well-formed, correctly-cited concepts.
+
+**What is not known, and why.** The run only persisted the *parsed* result (an empty list) — the raw LLM text was never logged, so there is nothing to inspect after the fact to confirm the specific malformation (prose preamble, truncation, a stray code fence variant the parser doesn't handle, etc.). Stating a specific cause beyond "failed to parse" would be a guess dressed as a finding.
+
+**Fixed the actual gap:** `generate_concepts()` now logs the full raw response via `logging.warning` whenever `parse_concepts` returns zero concepts from a non-empty LLM response. A future occurrence is diagnosable; this one is not, and is reported honestly as such rather than backfilled with a plausible-sounding explanation.
+
+**Measured, not estimated — citation correctness across all six real runs:** 15 concepts generated, mean **citation_correctness = 1.000** (n=15; every cited ID was in that run's retrieved set). This is a small sample from six hand-written briefs, not a golden-set eval, and is reported at that scope. One additional run generated zero concepts for the reason above, contributing 0 concepts (not a 0.0 score) to this figure.
+
+**Cost, logged not estimated.** Total across this session's real API usage — 98 bootstrap labels, 5 escalations, 104 analyst summaries, 6 generation runs (including the zero-concept one, which still consumed a call) — is **$0.5350**, read from `eval/cost_log.csv`, not summed by hand.
+
+## Entry #30 — Ragas judge LLM: two real bugs, one diagnosed-but-unresolved (W5.7)
+
+**Bug A — Ragas defaults to OpenAI.** Calling `ragas.evaluate()` with no `llm=` argument requires `OPENAI_API_KEY`, which this project does not have and by design should never need (AGENTS.md: "no extra vendor API keys"). Fixed by wrapping the project's own Anthropic client via `langchain-anthropic` + `LangchainLLMWrapper` and passing it explicitly as the judge — Ragas stays on the one vendor already in use.
+
+**Bug B — `temperature` deprecated on Sonnet 5, injected two layers deep.** Every judge call failed with the same 400 (`temperature is deprecated for this model`) already hit once in `llm.py` (Entry #29) — but fixing `ChatAnthropic(temperature=None)` at construction was **not sufficient**, and it took two follow-up attempts, each verified against a real API call before moving on, to find why:
+
+1. First attempt: pass `temperature=None` to `ChatAnthropic`. Verified standalone with one real call — worked in isolation, still failed inside the full Ragas run (30/30 calls, same 400).
+2. Traced by reading actual ragas source, not guessing: `LangchainLLMWrapper.agenerate_text` only calls `self.get_temperature(n)` when its incoming `temperature` argument is `None` — so overriding `get_temperature()` (second attempt) looked like the fix.
+3. That still failed, because **one level higher**, `BaseRagasLLM.generate()` (the method every metric actually calls) already replaces an incoming `temperature=None` with a hardcoded `1e-8` *before* `agenerate_text` ever runs. By the time `agenerate_text` sees it, the value is never `None`, so `get_temperature()` is never consulted at all.
+4. **Fix:** override `agenerate_text` itself to force `temperature=None` regardless of the value it receives, preserving the original method's branching exactly (the single-completion path and the `n>1` path `answer_relevancy` needs for its `strictness=3` parameter — both verified against real API calls, including the `n=3` path specifically, before re-running the full 30-job evaluation).
+
+**Bug C — diagnosed, not fixed, per explicit instruction to stop at this layer.** With A and B resolved, Faithfulness's NLI-statement-verdict prompt fails to parse Claude's output on the large majority of calls (`RagasOutputParserException`, `n_l_i_statement_prompt` / `fix_output_format`). Two runs: **3 of 15** samples scored, then **0 of 15**. This looks like a genuine output-format incompatibility between this ragas version's parser (built and tested against OpenAI-shaped outputs) and Claude's — not a temperature issue, not something either bug above touches, and not pursued further.
+
+**What is actually reportable, with honest sample counts:**
+
+| Metric | Scored / total | Value | Note |
+|---|---|---|---|
+| `answer_relevancy` | 15 / 15 (both runs) | 0.573 – 0.627 across two runs | Reliable; no parser failures observed |
+| `faithfulness` | 0–3 / 15 | 0.468 (n=3) or NaN (n=0) | **Not usable in its current form** — most calls never produce a scoreable output |
+
+`ragas_eval.py` now reports `n_scored` per metric alongside every score, computed from `EvaluationResult.to_pandas()` — a metric's aggregate mean silently drops unparseable samples, so reporting the bare number without its support would misstate the sample size (the same failure mode B5 exists to prevent for retrieval metrics).
+
+**Not fabricated:** no retrieval golden-set number was approximated from the corpus to fill this gap, per instruction. `make eval` still reports "Golden set is empty" and nothing else.
+
+**Fair to report today, and reportable without a golden set (also per instruction):**
+- **Citation correctness**, post-gate, across all 6 real generation runs: **1.000** (n=15 concepts) — Entry #29.
+- **Citation correctness**, pre-gate vs. post-gate, on a separate 3-brief check: **1.000 both**, 0 concepts dropped by the self-check gate — Entry #29.
+- **Planted-violation reviewer test**: passes (`test_planted_prohibited_claim_is_flagged`), deterministic, no key required.
+- **Ragas `answer_relevancy`**: 0.573–0.627 across two independent runs, n=15.
+- **Ragas `faithfulness`**: not usable pending a parser fix or a ragas version upgrade — reported as broken, not papered over with a partial-sample number presented as complete.

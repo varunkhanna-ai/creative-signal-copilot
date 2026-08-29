@@ -1,0 +1,18 @@
+{
+  "n_samples": 15,
+  "n_scored": {
+    "faithfulness": 0,
+    "answer_relevancy": 15
+  },
+  "run_ids": [
+    "run_075a351d1056",
+    "run_3bc93cebf228",
+    "run_6da5489990b7",
+    "run_a9556c15c6fa",
+    "run_e0bd113c0654"
+  ],
+  "scores": {
+    "faithfulness": NaN,
+    "answer_relevancy": 0.572964393969208
+  }
+}

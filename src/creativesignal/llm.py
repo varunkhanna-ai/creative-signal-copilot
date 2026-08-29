@@ -145,7 +145,7 @@ def complete(
     model: str = HAIKU_MODEL,
     system: str | None = None,
     max_tokens: int = 1024,
-    temperature: float = 0.0,
+    temperature: float | None = None,
     prompt_version: str = "",
     **kwargs: Any,
 ) -> LLMResponse:
@@ -162,10 +162,14 @@ def complete(
     request: dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
-        "temperature": temperature,
         "messages": messages,
         **kwargs,
     }
+    # `temperature` is deprecated on newer models (Sonnet 5 returns a 400 if it
+    # is sent at all), so it is omitted unless a caller explicitly asks for it.
+    # See decision-log Entry #29.
+    if temperature is not None:
+        request["temperature"] = temperature
     if system:
         request["system"] = system
 

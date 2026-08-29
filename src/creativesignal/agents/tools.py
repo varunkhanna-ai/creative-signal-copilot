@@ -228,10 +228,24 @@ def generate_concepts(
         prompt_version="concept_v1",
         max_tokens=2500,
     )
+    parsed = parse_concepts(response.text)
+    if not parsed:
+        # A parse failure here is otherwise silent: the caller sees an empty
+        # list indistinguishable from "the model legitimately produced
+        # nothing." Log the raw text so a real occurrence is diagnosable
+        # instead of leaving a "0 concepts" run with nothing to inspect
+        # after the fact. See decision-log Entry #29.
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "generate_concepts: parse_concepts returned 0 concepts from a "
+            "non-empty LLM response. Raw response follows.\n%s",
+            response.text,
+        )
     allowed = {c.creative_id for c in creatives}
     return [
         concept
-        for concept in parse_concepts(response.text)
+        for concept in parsed
         if set(concept.cited_creative_ids) <= allowed
     ]
 
