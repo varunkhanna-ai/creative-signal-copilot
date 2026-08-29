@@ -1,0 +1,31 @@
+# W2.6 — GOLDEN SET. NOT YET BUILT. This file is the format spec, not data.
+#
+# Owner: Human (implementation.md W2.6, 2.0h). 20 realistic queries with 3-5
+# hand-labeled relevant creative IDs each; grown to 25 at W3.10, 30 at W4.8,
+# and 30-50 at W5.6.
+#
+# Blocked on the corpus, not on effort: labeling relevance against the nine
+# available Tier-2 rows would produce a golden set that measures nothing
+# (docs/decision-log.md B1/B2). Build this after Tier-3 curation (W0.3) lands.
+#
+# Format — one JSON object per line, `#` comments and blank lines ignored:
+#   {"query": "<what a strategist would type>",
+#    "relevant_creative_ids": ["<id>", "<id>", "<id>"],
+#    "notes": "<why these, for the L1 failure-reading pass; optional>"}
+#
+# Labeling rules (Entry #11 — metrics are computed over creative IDs):
+#   - Label CREATIVES relevant, not representations. Ignore how the index is
+#     built; you are answering "would a strategist want to see this ad?"
+#   - 3-5 relevant IDs per query. Fewer makes recall jumpy; more usually
+#     means the query is too broad to be realistic.
+#   - Write the query first, then find matches. Reading the corpus first and
+#     writing a query around it produces queries the retriever trivially wins.
+#   - Include a few queries in STRATEGIST vocabulary that share no words with
+#     the ad copy ("authority-led moisturizer ads"). Those are the ones that
+#     separate hybrid from keyword-only — without them the comparison is
+#     rigged toward BM25.
+#   - Verify every ID exists: sqlite3 data/corpus.sqlite "select creative_id from creatives"
+#
+# Example of a well-formed line (the IDs are real; the labels are NOT
+# human-verified, so this line stays commented out and is not loaded):
+# {"query": "gentle daily cleanser for sensitive skin", "relevant_creative_ids": ["t2_smangrul_0951", "t2_smangrul_0595", "t2_jaykin_0383"], "notes": "cleanser + gentle exfoliation copy"}

@@ -1,157 +1,82 @@
-# CreativeSignal — Case Study (Draft)
-
-> **Status: first draft for human edit.** Structure and claims below are
-> grounded in `AGENTS.md`, `implementation.md`, `docs/prd.md`, and
-> `docs/decision-log.md`. Eval numbers are placeholders until Week 5 data
-> exists — nothing here should read as a measured result yet.
+# CreativeSignal — case study
 
 ## The problem
 
-A freelance or solo skincare marketer runs several client accounts at once
-with no in-house creative team and — critically — no internal
-legal/compliance function. They move fast across brands and are personally on
-the hook when a client's ad is rejected or flagged for an unsupported efficacy
-claim ("clinically proven," "reduces wrinkles").
+Creative teams in performance marketing decide what to make next from a mix of instinct, whatever competitor ads they happened to see, and a deck someone made last quarter. The obvious AI product here is "tell me what creative works." That product cannot be built honestly, because **the data to support it does not exist publicly**: the Meta Ad Library exposes no spend, impressions, or CTR for ordinary commercial ads.
 
-For this persona, a policy review isn't a nice-to-have double-check. It *is*
-the compliance function — there is no one else. CreativeSignal exists to give
-that marketer evidence-backed patterns from real skincare ads and reviewable
-concept drafts with policy risk flagged automatically, so they can move fast
-and catch problems themselves.
+So the product question became: *what is genuinely useful, and truthful, given only what can be observed?*
 
-## The honesty-rule design philosophy
+The answer CreativeSignal commits to: **traceable prevalence**. Not "this converts," but "this pattern appears in 22 of 34 retrieved ads, here are their IDs and source links, and here is what that does and does not tell you." Every output is a hypothesis with its evidence attached.
 
-Every design and wording decision in this project is downstream of a single
-non-negotiable sentence, reproduced verbatim in every output:
+## The decision that shaped everything
 
-> "Every insight is traceable to examples; every recommendation is a
-> hypothesis, not a performance claim."
+The honesty rule appears verbatim in the UI, the README, and every generated report:
 
-The practical consequences:
+> Every insight is traceable to examples; every recommendation is a hypothesis, not a performance claim.
 
-- **Prevalence, not performance.** The product says "pattern prevalence,"
-  "engagement proxy," "longevity proxy" — never "what performs best" or
-  "winning ads." There is no causal performance claim anywhere.
-- **Traceability is mandatory.** Every generated report and concept cites
-  creative IDs plus source links and ends with a coverage statement
-  (e.g. "Based on 18 retrieved examples; descriptive, not causal.").
-- **Descriptive-by-construction labels.** The insight model's label is a
-  *longevity proxy* (`days_active`, `variant_count` buckets) rather than an
-  engagement metric the corpus doesn't actually carry (see F1 in
-  `implementation.md`). "Long-running / heavily-varied ads are ones the
-  advertiser keeps paying for" is a defensible, clearly-descriptive heuristic.
+The important part was refusing to let it be prompt wording. Prompts drift, and a model told to be careful is still a model. So it is enforced structurally in four places:
 
-This framing was chosen over sophistication on purpose. Explainability and
-measurability beat every other tradeoff in the build.
+1. **Citation self-check** — a concept citing evidence it wasn't given is *dropped*, not flagged with a caveat.
+2. **Coverage floor** — below 3 retrieved examples the agent reports the coverage gap instead of producing patterns. The honest failure mode is a first-class output.
+3. **Insight rules** — rendered through a function whose output a test forbids from containing *performs, works, converts, wins, best, effective*.
+4. **MCP payloads** — the honesty rule and coverage statement travel inside the JSON, because that is the one surface where output leaves our UI and there is no footer to rely on.
 
-## Key architectural decisions
-
-Summarized from `docs/decision-log.md` and `implementation.md` — real
-decisions made on this project, not new content.
-
-### 1. Vertical: skincare (Decision Log #1)
-
-Chosen because it has the densest coverage in the Meta Ad Library among the
-three candidates, both Tier-2 ad-copy datasets contain beauty/skincare rows,
-and — most importantly — skincare's regulated efficacy claims make the
-Reviewer agent genuinely load-bearing rather than decorative.
-
-### 2. Source/annotation table split (Decision Log #3)
-
-The corpus keeps `creatives` (observed facts + deterministic derivations) and
-`annotations` (model judgment calls) as **separate tables, never merged**. The
-dividing line is "did a model exercise judgment," not "was this computed."
-So the F1 longevity-proxy fields (`days_active`, `proxy_bucket`,
-`variant_count`) live in `creatives` — they're deterministic arithmetic, not
-model judgment — while `hook_type`/`tone`/`confidence`/`annotator` live in
-`annotations`. A third `runs` table (added W4.6b) persists generation outputs.
-
-### 3. Retrieval unit: structured record, not chunks
-
-No document chunking. The retrieval unit is a structured creative record with
-two representations — the creative card and the analyst summary. This is the
-product's core design claim and it's what makes citation-traceability possible.
-
-### 4. Local-first, no-key retrieval
-
-ChromaDB (local persistent), `BAAI/bge-small-en-v1.5` as the single embedding
-model everywhere, and `rank_bm25` for keyword retrieval. The retrieval path
-runs with no API key at all; `ANTHROPIC_API_KEY` is the only secret in the
-system. No cloud databases, no scrapers, no live Meta/TikTok calls — the
-corpus is curated local data.
-
-### 5. Two-tier LLM split
-
-Haiku-class for high-volume calls (annotation escalation, analyst summaries)
-and Sonnet-class for synthesis and review (agent synthesis, concept
-generation, reviewer). This mirrors the product's own cost story. All calls go
-through a single wrapper (`src/creativesignal/llm.py`) with retries, cost
-logging, and Phoenix tracing — never direct `anthropic` client usage.
-
-### 6. Plain Python + Pydantic, no agent framework
-
-Agents are plain Python loops with Pydantic-typed tool functions — no
-LangChain/LlamaIndex/CrewAI. Maximum explainability: there is no abstraction
-layer you'd have to explain around in an interview.
-
-### 7. Stretch scope is explicitly gated (Decision Log #2)
-
-A `visual_direction` text field on Concept was defined but *not scheduled* —
-actual image generation would require a second vendor API key and violate the
-"no extra keys" rule. It sits in the cut order (fine-tune → A2A → image
-drafts → MCP) as a kill-switched stretch item, not a default.
-
-### 8. MCP server as the differentiator (Week 5)
-
-Four read-only tools over the same corpus (`search_creatives`,
-`get_creative_details`, `get_category_stats`, `generate_evidence_report`)
-expose the tool layer to external clients. The read-only guarantee is
-non-negotiable: the server queries the corpus, it never writes to it.
-
-## Tool-routing approach
-
-The working model is a judgment-vs-mechanical split across three tools plus
-the human, fixed in `implementation.md` and binding throughout:
-
-| Tool | Owns | Examples |
-|---|---|---|
-| **CC** (Claude Code) | Component/architecture design, prompt design, tradeoff judgment, **all debugging** | schema design (W1.3), hybrid retrieval (W2.5), reviewer agent (W4.5) |
-| **KC** (Kilo Code, `deepseek-v4-flash`) | Boilerplate, scaffolding, data loaders, sklearn scripts, MCP server impl, standard UI | loaders (W1.4), Chroma index (W2.4), explore page (W2.9), MCP server (W5.2) |
-| **Chat** (claude.ai) | PM judgment, honesty-language wording, week-end checkpoints, visual prototyping via Artifacts | taxonomy freeze (W1.5), walkthroughs, reviewer rubric draft (W3.7) |
-| **Human** | Curation, labeling spot-checks, human eval, decisions of record | Tier-3 curation (W0.3), hand-verify 50 rows (W1.7) |
-
-Two supporting rituals make the split observable rather than asserted:
-
-- **Walkthrough-before-build.** Non-trivial tasks get a Chat walkthrough that
-  produces a decision-log entry *before* the build prompt, so the coding agent
-  implements a decided approach rather than inventing one.
-- **Spot-check (⚖️).** One task per week is re-run in Claude Code and diffed
-  against the KC output for ~10 minutes, with a paragraph logged in the
-  decision log. This is the raw material for the model-selection / cost-tier
-  findings section below.
-
-A hard lesson from the log (Decision Log #4): a coding agent's self-reported
-"done" is not evidence. Only `git log` (a new commit exists) and direct
-inspection of file contents count. This is now standing practice after a
-Cloud-Agent false-completion pattern.
-
-## Results
-
-**[eval results table - Week 5 data]** — Recall@5 / Precision@5 (target
-~0.70), citation-correctness, Ragas groundedness/faithfulness, and the
-6-dimension human rubric, each with sample sizes, go here once `make eval`
-and the Week 5 human rubric run are complete.
-
-**[model-routing / cost-tier findings from the ⚖️ spot-check log]** — the
-KC-vs-CC comparison paragraphs and the LLM cost story (LR-vs-escalated
-annotation rate and token cost from `eval/cost_log.csv`) belong here.
-
-**[cost log numbers]** — annotation escalation rate and per-run token cost.
+A test suite can't verify honesty. It can verify that the specific mechanisms which make dishonesty easy are closed.
 
 ## What I'd do with production data
 
-*(To be written by the human editor — this section is explicitly a
-judgment-artifact deliverable, per Week 6. Placeholder retained so the
-draft's scope is visible.)*
+The gap between this and a real product is data, not architecture.
 
-[placeholder — production-data expansion notes]
+- **Real engagement data changes the label, not the framing.** With spend and impressions, `proxy_bucket` becomes an actual outcome variable — but the correct language stays correlational, because ad performance is confounded by budget, targeting, and seasonality. I'd resist the pressure to relabel "prevalence" as "performance" the moment a number appears; the honest version is "among ads with comparable spend and audience."
+- **The two-stage annotator is where the cost story lives.** LR-first with LLM escalation only below a confidence threshold is a real lever: at 10k creatives, the difference between a 20% and a 60% escalation rate is most of the annotation budget. The threshold table exists to make that a business decision rather than a default.
+- **The golden set is the highest-leverage artifact and the least glamorous.** Everything downstream — weight tuning, the similarity floor, whether hybrid actually beats keyword — is unmeasurable without it. I'd build it first next time, before writing retrieval code.
+- **The corpus needs provenance, not size.** 200 ads with ad-library URLs, advertisers, and run durations beat 5,000 scraped strings. Tier-3 is the whole product; Tier-2 turned out to be near-useless (see below).
+
+## What went wrong, and what it taught me
+
+**The corpus collapsed from 300 to 9.** The plan assumed ~300 rows. Filtering two Hugging Face ad-copy datasets to skincare yielded 24. Reading the actual rows — rather than trusting the count — showed that 4 were false positives (clothes irons and garment steamers matched on *"wrinkle"*; hair serum on *"serum"*), and that the two "independent" datasets overlapped almost entirely, many rows byte-identical. **9 unique ads.**
+
+That number invalidated every eval in the plan. The choice at that point was to generate 100–200 plausible Meta Ad Library records and proceed, or to stop and report. I stopped. Fabricating advertisers, ad-library URLs, and observation dates would have made every downstream citation trace to invented data — in a project whose entire thesis is traceability. **The blocker is more valuable than the fake result would have been**, and a capstone that publishes numbers it can't defend teaches the wrong lesson.
+
+**Reading data beats counting it.** The row count looked fine at 24. Every real problem was visible only in the rows. This is the same discipline as the L1 "failure reading" habit the eval plan schedules — and it applies to ingest, not just eval.
+
+**Two bugs that would have shipped.** Both were invisible in normal use:
+- A **segfault** killed the server on the first search — no traceback, nothing in the logs. The plausible diagnosis (PyTorch in a thread) was wrong and cost a fix attempt. The macOS crash report named the real culprit in one step: PyArrow's mimalloc allocator. Lesson: a segfault produces no Python traceback, so read the native one instead of guessing from symptoms.
+- **BM25's IDF goes negative** for terms appearing in more than half the corpus. Filtering on `score > 0` silently discarded valid matches — and the bug got *worse* as the corpus got smaller, which is exactly backwards. It surfaced three layers up, as an agent coverage-check failure. A guard built for honesty caught a correctness bug.
+
+**Pinning direct dependencies is not pinning dependencies.** Twice, a *shared transitive* dependency broke a subsystem far from where it was chosen — once taking down the entire test suite at collection time (Phoenix registers a pytest plugin, so its import health is everyone's problem), once making the MCP server unimportable. Both surfaced as "the new module is broken" rather than "the pin is wrong." A lockfile is now a deliverable.
+
+## Model routing: what actually differed
+
+The plan routed judgment work to Claude Code and mechanical work to a cheaper backend. Executing most of it on one tier, the split that actually mattered was not model quality — it was **which decisions can be made without data**.
+
+The tasks that genuinely needed judgment were the ones where the correct answer was *"refuse, and say why"*:
+
+- Not fabricating Tier-3 data.
+- Refusing to train the classifier and the tree, rather than fitting on 9 rows and reporting a meaningless accuracy.
+- Declining to add a similarity floor tuned on three hand-picked queries — a floor set slightly too high silently returns nothing, which is worse than returning weak results with an honest coverage statement.
+- Leaving three constants explicitly uncalibrated, each with the procedure for setting it written down.
+
+A cheaper model would very likely have produced the tempting version of each: plausible synthetic ads, a 100%-accuracy tree (trained on features that *are* the label), a tuned threshold. Every one of those looks like progress in a diff and is worse than nothing. **The expensive judgment wasn't writing the code — it was knowing which code not to write.**
+
+The mechanical/judgment split in the plan holds, but the boundary is better drawn as: *does this task have a defensible answer given the data that exists?* If not, it is a judgment task regardless of how routine it looks.
+
+## Epilogue: what happened once Tier-3 and an API key actually arrived
+
+The above was the state at the point the architecture was complete and blocked. Both blockers subsequently cleared — Tier-3 curation landed (95 real Meta Ad Library rows) and the API key became reachable — and neither turned out to be the last surprise.
+
+**The corpus's own data needed a second pass of "read the rows, not the count."** Two of the F1 proxy fields did not survive contact with real curation: `variant_count` was a constant 20 across every one of the 95 rows — no distribution, no information — and it had been the field silently forcing every ad into the "high" longevity bucket under the placeholder rule. Recalibrating on `days_active` alone, against its real tertiles, gave a properly balanced three-way split. The escalation threshold had the same shape of surprise: the honest 0.70 placeholder, once tested against a real out-of-fold accuracy table, turned out to escalate 93–98% of rows — quietly defeating the entire two-stage cost design it was supposed to govern. The fix (0.35) came directly from data that didn't exist an hour earlier.
+
+**Getting one real Ragas number took more debugging than writing the retrieval pipeline did.** Ragas defaults to a second vendor's LLM as its judge, which the project's own rules forbid; fixing that surfaced a `temperature` incompatibility with Sonnet 5 injected two call-layers inside Ragas's own code, not at the constructor argument that looked like the obvious fix point. Confirming each fix against one real API call before scaling to the full evaluation — rather than trusting a standalone unit test — is what caught that the first "fix" was incomplete. One of the two Ragas metrics still doesn't parse Claude's output reliably in this library version; that is reported as a diagnosed, unresolved gap rather than patched past or hidden.
+
+**The lesson underneath both:** a placeholder value that is *labeled* as a placeholder is not the same risk as an unlabeled one, but it is still a guess, and guesses about data you don't have yet are wrong in specific, discoverable ways once the data shows up. The discipline that mattered wasn't predicting the surprises — it was refusing to ship the guesses as measurements in the meantime, and re-checking every one the moment real data made checking possible.
+
+## Status, honestly
+
+Built, tested, and now **run against real data**: retrieval, agent, reviewer, MCP server, four-page app, 222 tests, deploy config. 104-creative corpus (95 real Tier-3 + 9 synthetic Tier-2). $0.535 in real logged LLM spend across bootstrap labeling, escalation, analyst summaries, and six end-to-end generation runs.
+
+Measured and reported: citation correctness (1.000, n=15), Ragas answer relevancy (0.57–0.63, n=15), the annotator's real accuracy (90.5% / 79.6% out-of-fold), the insight tree trained on real data, and the planted-violation reviewer test passing deterministically.
+
+Not done, and precisely scoped to one thing: **the retrieval golden set** (W2.6). Recall@5, Precision@5, and the semantic-vs-hybrid comparison are wired against the real corpus and waiting on nothing else. Ragas faithfulness is measured but not usable, for a diagnosed reason, not a hidden one.
+
+The architecture is finished. The measurement is mostly done, honestly labeled where it isn't. Both statements are in the README, because a reader who installs this deserves to know which is which before they run it.

@@ -1,25 +1,31 @@
-.PHONY: ingest annotate index eval slice app mcp test
+.PHONY: download ingest annotate summaries index eval slice app mcp test
+
+download:
+	python -m creativesignal.ingest.download
 
 ingest:
 	python -m creativesignal.ingest.build_corpus
 
 annotate:
-	@echo "annotate: not yet implemented"
+	python -m creativesignal.annotate.bootstrap
+
+summaries:
+	python -m creativesignal.retrieval.cards
 
 index:
-	@echo "index: not yet implemented"
+	python -m creativesignal.retrieval.index
 
 eval:
-	@echo "eval: not yet implemented"
+	python -m creativesignal.eval.run_eval
 
 slice:
-	@echo "slice: not yet implemented"
+	python -m creativesignal.slice $(if $(BRIEF),--brief "$(BRIEF)",)
 
 app:
-	@echo "app: not yet implemented"
+	streamlit run app/streamlit_app.py
 
 mcp:
-	@echo "mcp: not yet implemented"
+	python mcp_server/server.py
 
 test:
 	pytest
