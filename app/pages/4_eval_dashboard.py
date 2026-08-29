@@ -18,8 +18,9 @@ import streamlit as st
 from shared import empty_state, honesty_footer, page_header
 
 from creativesignal.annotate.escalate import CONFIDENCE_THRESHOLD, escalation_stats_from_db
-from creativesignal.eval.metrics import load_golden_set
+from creativesignal.eval.metrics import citation_correctness, load_golden_set
 from creativesignal.llm import COST_LOG, total_spend
+from creativesignal.runs import list_runs
 
 st.set_page_config(page_title="Eval — CreativeSignal", layout="wide")
 
@@ -46,6 +47,13 @@ def latest_results() -> dict | None:
     return json.loads(files[-1].read_text(encoding="utf-8"))
 
 
+def latest_ragas_results() -> dict | None:
+    path = RESULTS_DIR / "ragas_eval.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 # --- retrieval ------------------------------------------------------------
 
 st.subheader("Retrieval")
@@ -59,10 +67,11 @@ except FileNotFoundError:
 results = latest_results()
 if not results or not golden:
     empty_state(
-        "No retrieval eval has been run. The golden set (W2.6) is not built "
-        "yet, and the corpus is 9 synthetic ads — metrics over a corpus that "
-        "small would be noise, not measurement. This panel deliberately shows "
-        "nothing rather than a misleading zero. See docs/decision-log.md B1/B2."
+        "No retrieval eval has been run. The corpus is no longer the "
+        "constraint (104 creatives, 95 with real Meta Ad Library provenance) "
+        "— the golden set (W2.6, 20+ hand-labeled queries) is the one input "
+        "still missing. This panel deliberately shows nothing rather than a "
+        "misleading zero. See docs/decision-log.md B5."
     )
     st.markdown("**Targets this panel will report against**")
     st.dataframe(
@@ -144,6 +153,82 @@ else:
 
 st.divider()
 
+# --- generation -------------------------------------------------------------
+
+st.subheader("Generation")
+
+runs = list_runs(limit=25)
+concepts_with_context = [
+    (run, concept) for run in runs for concept in run.concepts
+]
+
+if not concepts_with_context:
+    empty_state(
+        "No generation runs with concepts exist yet. Citation correctness is "
+        "implemented and unit-tested; it needs a real run to measure."
+    )
+else:
+    scores = [
+        citation_correctness(concept.cited_creative_ids, run.retrieved_creative_ids)
+        for run, concept in concepts_with_context
+    ]
+    mean_score = sum(scores) / len(scores)
+    columns = st.columns(2)
+    columns[0].metric(
+        "Citation correctness",
+        f"{mean_score:.3f}",
+        delta=f"{mean_score - TARGETS['citation_correctness']:+.3f} vs target",
+    )
+    columns[1].metric("Concepts scored", len(scores))
+    st.caption(
+        f"Across {len(runs)} persisted runs. Fraction of cited creative IDs "
+        "that were actually retrieved — a concept citing evidence it was "
+        "never given does not ship (the agent's self-check gate), so this "
+        "number reflects how often that gate would have had to fire."
+    )
+
+ragas_results = latest_ragas_results()
+if ragas_results is None:
+    empty_state(
+        "No Ragas evaluation has been run yet. Run `python -m "
+        "creativesignal.eval.ragas_eval` — it needs generated runs and an "
+        "API key."
+    )
+else:
+    st.caption(
+        f"Ragas, judged by Claude (not OpenAI — see decision-log Entry #30), "
+        f"over {ragas_results['n_samples']} concepts from "
+        f"{len(ragas_results['run_ids'])} runs."
+    )
+    n_scored = ragas_results.get("n_scored", {})
+    columns = st.columns(2)
+    relevancy = ragas_results["scores"].get("answer_relevancy")
+    if relevancy is not None and not (isinstance(relevancy, float) and relevancy != relevancy):
+        columns[0].metric(
+            "Answer relevancy",
+            f"{relevancy:.3f}",
+            help=f"Scored on {n_scored.get('answer_relevancy', '?')} of "
+                 f"{ragas_results['n_samples']} samples",
+        )
+    faithfulness = ragas_results["scores"].get("faithfulness")
+    scored_n = n_scored.get("faithfulness", 0)
+    if faithfulness is None or (isinstance(faithfulness, float) and faithfulness != faithfulness):
+        columns[1].metric("Faithfulness", "unusable", delta=f"{scored_n} of {ragas_results['n_samples']} scored", delta_color="off")
+    else:
+        columns[1].metric(
+            "Faithfulness",
+            f"{faithfulness:.3f}",
+            delta=f"{faithfulness - TARGETS['groundedness']:+.3f} vs target ({scored_n} of {ragas_results['n_samples']} scored)",
+        )
+    st.caption(
+        "Faithfulness's NLI-statement prompt fails to parse Claude's output "
+        "on most calls in this ragas version — diagnosed, not fixed. The "
+        "score above (if any) is a mean over only the samples that parsed; "
+        "see docs/decision-log.md Entry #30."
+    )
+
+st.divider()
+
 # --- cost -----------------------------------------------------------------
 
 st.subheader("Cost")
@@ -161,16 +246,13 @@ st.divider()
 st.subheader("Not yet measured")
 st.markdown(
     """
-These are wired and tested but have produced no numbers, because the inputs
-they need do not exist yet:
+- **Recall@5 / Precision@5, semantic-vs-hybrid** (W2.8) — blocked on the golden set (W2.6, human), not on the corpus. See decision-log B5.
+- **Ragas faithfulness** (W5.7) — run, but not usable: a parser incompatibility between this ragas version and Claude's output scores only a few of every 15 samples. Reported above as broken, not hidden. See decision-log Entry #30.
+- **Human rubric scores** (W5.8) — the rubric and its fixed output set (drawn from the real persisted runs above) exist; scoring is a human's job and hasn't happened yet.
 
-- **Ragas groundedness / faithfulness** (W5.7) — needs generated reports, which need an API key.
-- **Human rubric scores** (W5.8) — needs a fixed output set drawn from saved runs.
-- **Citation correctness** (W4.8) — implemented and unit-tested; needs a real generation run.
-- **Insight tree** (W3.6) — needs Tier-3 curation.
-
-Publishing placeholder numbers for any of these would be the exact failure
-this project is built to avoid.
+Publishing a placeholder number for any of these would be the exact failure
+this project is built to avoid — each is reported as exactly what it is,
+including "measured, but not usable" where that's the honest state.
 """
 )
 

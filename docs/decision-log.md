@@ -516,3 +516,15 @@ Verified after the fix: facebook 95, instagram 95, messenger 38, threads 38, tik
 **Test added:** `tests/test_llm.py`, including one test that pins the actual fix (`load_dotenv` must be called with `override=True`) so a future refactor that quietly drops the kwarg fails loudly rather than silently regressing.
 
 **Not the user's `.zshrc` to fix.** The blank export may be intentional elsewhere (e.g., to make an unset key explicit rather than absent) — the fix belongs in this project's code, which cannot assume every developer's shell environment is clean, not in a personal dotfile outside the repo's control.
+
+## Entry #32 — Eval dashboard never wired to read real generation results (W5.10, debugging)
+
+**What was reported.** The eval dashboard still showed "not yet measured" for citation correctness and Ragas after both had been run for real (Entry #29/#30: citation correctness 1.000 n=15, Ragas answer relevancy 0.57–0.63 n=15).
+
+**Not a staleness bug — a missing-wiring bug.** The page was written at W5.10, before any generation run existed, and was never revisited after those runs landed. Concretely: it never imported `citation_correctness` or `list_runs`, never read `eval/results/ragas_eval.json` (only `retrieval_eval_*.json`, a different file for a different metric), and its "Not yet measured" section was static markdown text listing all four generation metrics as permanently unmeasured — not a check against any data source at all. The annotator section and cost section *were* wired to live queries and were already showing real numbers (98 annotations, $0.535) the whole time; only the generation-metrics section had no wiring.
+
+**Fix.** Added a Generation section computing citation correctness live from the `runs` table (same `citation_correctness()` function the eval harness uses, so the dashboard and the CLI report cannot silently disagree) and loading `ragas_eval.json` directly, including its `n_scored` breakdown so faithfulness's near-total parse-failure rate (Entry #30) is visible as "unusable, 0 of 15 scored" rather than a blank or a misleadingly bare number. Rewrote the "Not yet measured" block to state only what is genuinely unmeasured — the golden set and the human rubric — instead of four items, two of which had real results sitting on disk unread.
+
+**Also fixed in passing:** the retrieval empty-state message still said "the corpus is 9 synthetic ads," a factual claim that stopped being true once Tier-3 landed (B1). Corrected to name the real blocker (the golden set) rather than a corpus-size limitation that no longer exists.
+
+**Verified against the actual artifacts, not assumed:** computed citation correctness and read `ragas_eval.json` directly in a script first, then loaded the real running page and read its rendered text, and confirmed the two matched exactly (1.000/15, 0.573, unusable/0 of 15, $0.5350) before considering this done.
