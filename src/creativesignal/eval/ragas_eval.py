@@ -93,7 +93,7 @@ def _claude_judge():
 
     from creativesignal.llm import SONNET_MODEL, MissingAPIKeyError
 
-    load_dotenv()  # llm.py's own client loads it lazily the same way
+    load_dotenv(override=True)  # `.env` must win over a stray shell var — see llm.py Entry #31
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
         raise MissingAPIKeyError(

@@ -117,7 +117,14 @@ def _client():
     """Build the one Anthropic client, lazily so no-key paths stay importable."""
     from dotenv import load_dotenv
 
-    load_dotenv()
+    # override=True: `.env` must win over a pre-existing environment variable,
+    # not defer to it. python-dotenv's default (override=False) means a shell
+    # profile that exports ANTHROPIC_API_KEY="" (blank, as a placeholder or a
+    # leftover unset) permanently shadows a real key in `.env` — load_dotenv()
+    # sees the variable is already "set" and silently skips it. This looks
+    # identical to ".env not found" from the app's side, but `.env` is present
+    # and correct the whole time. See decision-log Entry #31.
+    load_dotenv(override=True)
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
         raise MissingAPIKeyError(
@@ -134,7 +141,7 @@ def has_api_key() -> bool:
     """True if an LLM call could succeed. Lets callers degrade rather than crash."""
     from dotenv import load_dotenv
 
-    load_dotenv()
+    load_dotenv(override=True)  # see _client() for why override=True is required
     return bool(os.getenv("ANTHROPIC_API_KEY"))
 
 
