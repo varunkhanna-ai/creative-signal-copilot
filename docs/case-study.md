@@ -61,10 +61,22 @@ A cheaper model would very likely have produced the tempting version of each: pl
 
 The mechanical/judgment split in the plan holds, but the boundary is better drawn as: *does this task have a defensible answer given the data that exists?* If not, it is a judgment task regardless of how routine it looks.
 
+## Epilogue: what happened once Tier-3 and an API key actually arrived
+
+The above was the state at the point the architecture was complete and blocked. Both blockers subsequently cleared — Tier-3 curation landed (95 real Meta Ad Library rows) and the API key became reachable — and neither turned out to be the last surprise.
+
+**The corpus's own data needed a second pass of "read the rows, not the count."** Two of the F1 proxy fields did not survive contact with real curation: `variant_count` was a constant 20 across every one of the 95 rows — no distribution, no information — and it had been the field silently forcing every ad into the "high" longevity bucket under the placeholder rule. Recalibrating on `days_active` alone, against its real tertiles, gave a properly balanced three-way split. The escalation threshold had the same shape of surprise: the honest 0.70 placeholder, once tested against a real out-of-fold accuracy table, turned out to escalate 93–98% of rows — quietly defeating the entire two-stage cost design it was supposed to govern. The fix (0.35) came directly from data that didn't exist an hour earlier.
+
+**Getting one real Ragas number took more debugging than writing the retrieval pipeline did.** Ragas defaults to a second vendor's LLM as its judge, which the project's own rules forbid; fixing that surfaced a `temperature` incompatibility with Sonnet 5 injected two call-layers inside Ragas's own code, not at the constructor argument that looked like the obvious fix point. Confirming each fix against one real API call before scaling to the full evaluation — rather than trusting a standalone unit test — is what caught that the first "fix" was incomplete. One of the two Ragas metrics still doesn't parse Claude's output reliably in this library version; that is reported as a diagnosed, unresolved gap rather than patched past or hidden.
+
+**The lesson underneath both:** a placeholder value that is *labeled* as a placeholder is not the same risk as an unlabeled one, but it is still a guess, and guesses about data you don't have yet are wrong in specific, discoverable ways once the data shows up. The discipline that mattered wasn't predicting the surprises — it was refusing to ship the guesses as measurements in the meantime, and re-checking every one the moment real data made checking possible.
+
 ## Status, honestly
 
-Built and tested: retrieval, agent, reviewer, MCP server, four-page app, 214 tests, deploy config.
+Built, tested, and now **run against real data**: retrieval, agent, reviewer, MCP server, four-page app, 222 tests, deploy config. 104-creative corpus (95 real Tier-3 + 9 synthetic Tier-2). $0.535 in real logged LLM spend across bootstrap labeling, escalation, analyst summaries, and six end-to-end generation runs.
 
-Not done: the corpus (Tier-3 curation, ~2h of human work), the golden set, and therefore every number. The LLM generation paths are built but were never executed — no API key was reachable during the build.
+Measured and reported: citation correctness (1.000, n=15), Ragas answer relevancy (0.57–0.63, n=15), the annotator's real accuracy (90.5% / 79.6% out-of-fold), the insight tree trained on real data, and the planted-violation reviewer test passing deterministically.
 
-The architecture is finished. The measurement isn't started. Both statements are in the README, because a reader who installs this deserves to know which is which before they run it.
+Not done, and precisely scoped to one thing: **the retrieval golden set** (W2.6). Recall@5, Precision@5, and the semantic-vs-hybrid comparison are wired against the real corpus and waiting on nothing else. Ragas faithfulness is measured but not usable, for a diagnosed reason, not a hidden one.
+
+The architecture is finished. The measurement is mostly done, honestly labeled where it isn't. Both statements are in the README, because a reader who installs this deserves to know which is which before they run it.
