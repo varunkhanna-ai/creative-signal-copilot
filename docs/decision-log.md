@@ -508,3 +508,44 @@ Verified after the fix: facebook 95, instagram 95, messenger 38, threads 38, tik
 - **Ragas `answer_relevancy`**: 0.573–0.627 across two independent runs, n=15.
 - **Ragas `faithfulness`**: not usable pending a parser fix or a ragas version upgrade — reported as broken, not papered over with a partial-sample number presented as complete.
 
+
+## Entry #33 — Local image generation: reversing Entry #2's "no image generation" call
+
+**Numbering note:** deliberately #33, not #31. This branch (`cc-image-generation`) is cut from `main`, whose decision log ends at #30, but `cc-base` already holds unmerged entries #31 and #32. Skipping those numbers reserves them so both branches merge without a collision in this file.
+
+**This reverses Entry #2.** That entry ruled out actual image generation and scoped the stretch item to a text-only `visual_direction` field. Its reasoning was explicit and, at the time, correct: image generation "would require a second vendor API key, directly violating the DECIDED 'no extra vendor API keys' rule."
+
+**What changed: the blocker was the API key, not the images.** Entry #2's objection was never aesthetic or scope-based — it was a governance constraint plus a cost/failure-surface argument. Local generation via `diffusers` on Apple Silicon's MPS backend removes the load-bearing half of that objection entirely:
+
+| Entry #2's objection | Status under local generation |
+|---|---|
+| Requires a second vendor API key | **Gone.** `ANTHROPIC_API_KEY` remains the only secret. Weights download from Hugging Face with no account or token. |
+| Adds a cost failure surface | **Gone.** No per-call cost. Compute is local. |
+| Adds a content-moderation surface | Partially remains — see the honest caveat below. |
+| Cuts against "explainability beats sophistication" | Unchanged, and still the real constraint — hence opt-in, off by default. |
+
+This is the same reasoning shape as the project's other reversals (#23, #26): a decision made on a defensible prior, revisited when the facts it rested on actually changed. The original call was not wrong; its premise expired.
+
+**Feasibility measured before committing to the approach, not assumed.** Apple M5, 24GB unified memory, `stabilityai/sd-turbo` at fp32 (MPS does not reliably support fp16 for this pipeline):
+
+| Measurement | Result |
+|---|---|
+| Model weights on disk (one-time) | 4.8 GB |
+| Pipeline load into memory | ~30 s |
+| First generation (512×512, MPS warmup) | 3.3 s |
+| Steady-state generation (512×512, 1 step) | 0.9 s |
+| **Generation at target 1080×1080, 1 step** | **5.7 s** |
+| MPS memory during 1080×1080 generation | 5.2 GB active / 16.5 GB driver-reserved |
+| Output verified | exact 1080×1080 PNG, ~1.4 MB |
+
+**Verdict: viable.** ~6 s per image for an explicitly opt-in action is acceptable. The Hugging Face Inference API fallback — which *would* have needed a free API key and reintroduced Entry #2's exact objection — is not needed.
+
+**The real constraint, named rather than buried:** the Metal driver reserves ~16.5 GB during a 1080×1080 generation. On a 24 GB machine that is most of unified memory. The wrapper is therefore sized for **one image per call, sequentially**, with no assumption of headroom for parallel generation — and this is a hard reason not to generate images for all three concepts automatically.
+
+**Quality, stated honestly:** at 1 inference step, output is stylistically plausible (clean product-photography framing, on-topic composition) but not literal or photorealistic. It is a *mood/direction* artifact for a human designer, not a packshot. That matches the `visual_direction` field's original intent from Entry #2 — a brief you hand to a designer — and the UI must not imply otherwise.
+
+**Content-moderation caveat that does NOT go away with local generation.** `sd-turbo` loads with its safety checker disabled by default in `diffusers`, and generation is unsupervised. Since output is derived from LLM-written `visual_direction` text describing skincare ads, prompt content is low-risk — but "local" removes the vendor's moderation layer rather than the need for one. This is a genuine residual risk from Entry #2's list, and it is the one item that did not clear.
+
+**Dependency conflict found and resolved (same pattern as #6, #19, #30).** `diffusers` 0.40.0 requires `huggingface-hub>=1.23`; `transformers` and `sentence-transformers` both require `<1.0`. Installing current `diffusers` broke `import transformers` outright — which would have taken down the entire embedding/retrieval stack, not just image generation. Pinned `diffusers==0.31.0` + `huggingface-hub==0.36.2`, then verified beyond import: the full test suite (222 passing) and a real hybrid retrieval query returning correct semantically-matched results under the downgraded hub.
+
+**Status:** feasibility confirmed and dependencies pinned. The wrapper module, opt-in UI toggle, and `runs`-table persistence are the remaining build.
