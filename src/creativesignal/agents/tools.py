@@ -22,6 +22,12 @@ from creativesignal.schema import Concept, Pattern, coverage_statement
 from creativesignal.sources.base import SearchFilters
 from creativesignal.sources.curated import DB_PATH, CuratedCorpusConnector
 
+# v2 adds `visual_direction`, the input to local image generation (Entry
+# #33). A new file rather than an edit to v1: prompts are versioned
+# (AGENTS.md) and the six already-persisted runs record concept_v1, so
+# overwriting it would silently misattribute what produced them.
+CONCEPT_PROMPT = "concept_v2"
+
 
 # --- typed I/O ------------------------------------------------------------
 
@@ -215,7 +221,7 @@ def generate_concepts(
     evidence = format_evidence(
         [SearchResult(creative=c, score=0.0, retrieved_by="agent") for c in creatives]
     )
-    prompt = load_prompt("concept_v1").format(
+    prompt = load_prompt(CONCEPT_PROMPT).format(
         brief=brief,
         n_examples=len(creatives),
         evidence=evidence,
@@ -225,7 +231,7 @@ def generate_concepts(
         prompt,
         task="generate_concepts",
         model=SONNET_MODEL,
-        prompt_version="concept_v1",
+        prompt_version=CONCEPT_PROMPT,
         max_tokens=2500,
     )
     parsed = parse_concepts(response.text)

@@ -584,3 +584,15 @@ This is the same reasoning shape as the project's other reversals (#23, #26): a 
 **Dependency conflict found and resolved (same pattern as #6, #19, #30).** `diffusers` 0.40.0 requires `huggingface-hub>=1.23`; `transformers` and `sentence-transformers` both require `<1.0`. Installing current `diffusers` broke `import transformers` outright — which would have taken down the entire embedding/retrieval stack, not just image generation. Pinned `diffusers==0.31.0` + `huggingface-hub==0.36.2`, then verified beyond import: the full test suite (222 passing) and a real hybrid retrieval query returning correct semantically-matched results under the downgraded hub.
 
 **Status:** feasibility confirmed and dependencies pinned. The wrapper module, opt-in UI toggle, and `runs`-table persistence are the remaining build.
+
+## Entry #34 — `visual_direction` is populated by a new prompt version, not an edit to `concept_v1`
+
+Entry #33 added `Concept.visual_direction` as the input to image generation, but nothing produced it — every generation fell back to the concept's ad copy, which describes what the ad *says* rather than what a picture should *show*. Two ways to close that:
+
+**Rejected: edit `concept_v1.txt` in place.** Prompts are versioned artifacts (AGENTS.md), and the six already-persisted runs each record `prompt_versions = {"concepts": "concept_v1"}`. Mutating v1 would leave those runs claiming they were produced by a prompt that no longer exists in that form — silently misattributing their provenance, and breaking the L3 prompt-A/B story that depends on a version stamp meaning something fixed.
+
+**Chosen: `concept_v2.txt`,** identical to v1 plus a `visual_direction` field, with `CONCEPT_PROMPT` as the single constant both the generator and the run-stamp read. Old runs keep pointing at v1 and remain exactly as attributed; new runs stamp v2.
+
+**The field asks for what a camera would see** — subject, composition, lighting, mood, palette — and explicitly forbids slogans, in-image text, and claims. Two reasons: diffusion models render text as gibberish (visible in the first real generations), and an image carrying a claim would route around the Reviewer entirely, which only inspects concept *text*. Keeping claims out of the image brief keeps the reviewer's surface complete.
+
+**Not yet verified against the live API.** The end-to-end check — that Claude actually returns a usable `visual_direction` under v2 — could not run: the Anthropic account's credit balance is exhausted (`400 invalid_request_error: Your credit balance is too low`). What *is* verified: v2 renders and requests the field, v1 is unchanged, the schema round-trips it, and the fallback path works (all three images on the replayed lip-balm run were generated through it). The prompt-to-model round trip is the one link untested, and it is untested for a billing reason, not a code reason.

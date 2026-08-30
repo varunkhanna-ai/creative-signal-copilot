@@ -127,6 +127,7 @@ def build_run(
     Versions are recorded per run so a later eval can tell which prompt
     produced which output — the L3 prompt-A/B measurement depends on it.
     """
+    from creativesignal.agents.tools import CONCEPT_PROMPT
     from creativesignal.llm import HAIKU_MODEL, SONNET_MODEL
 
     return Run(
@@ -138,7 +139,7 @@ def build_run(
         concepts=concepts,
         review_results=review_results,
         model_versions={"synthesis": SONNET_MODEL, "annotation": HAIKU_MODEL},
-        prompt_versions={"concepts": "concept_v1", "summary": "analyst_summary_v1"},
+        prompt_versions={"concepts": CONCEPT_PROMPT, "summary": "analyst_summary_v1"},
         token_cost_usd=token_cost_usd,
     )
 

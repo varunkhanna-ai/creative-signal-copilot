@@ -102,7 +102,9 @@ def test_list_runs_is_newest_first(tmp_path, run):
 def test_run_records_model_and_prompt_versions(run):
     """L3 prompt A/B needs to know which prompt produced which output."""
     assert run.model_versions["synthesis"]
-    assert run.prompt_versions["concepts"] == "concept_v1"
+    # concept_v2 adds visual_direction (Entry #33); v1 produced the six
+    # already-persisted runs, which is why the stamp is recorded per run.
+    assert run.prompt_versions["concepts"] == "concept_v2"
 
 
 def test_saving_twice_replaces_rather_than_duplicates(tmp_path, run):
