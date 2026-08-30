@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
-from shared import empty_state, honesty_footer, page_header, render_trace
+from shared import empty_state, generating, honesty_footer, inject_css, page_header, render_trace
 
 from creativesignal.agents.analyst import Brief, run_analyst
 from creativesignal.insight.tree import (
@@ -21,6 +21,7 @@ from creativesignal.insight.tree import (
 )
 
 st.set_page_config(page_title="Insights — CreativeSignal", layout="wide")
+inject_css()
 
 page_header(
     "Insights",
@@ -79,7 +80,10 @@ with st.form("trend"):
     submitted = st.form_submit_button("Generate report")
 
 if submitted and question:
-    with st.spinner("Retrieving evidence..."):
+    with generating(
+        "Retrieving evidence...",
+        detail="A live report typically takes 10–20 seconds.",
+    ):
         # Concepts are the other page's job; this is the report path only.
         analysis = run_analyst(
             Brief(text=question, audience="general"), with_concepts=False

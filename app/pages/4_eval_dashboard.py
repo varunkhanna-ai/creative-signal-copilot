@@ -15,13 +15,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
-from shared import empty_state, honesty_footer, page_header
+from shared import empty_state, honesty_footer, inject_css, page_header
 
 from creativesignal.annotate.escalate import CONFIDENCE_THRESHOLD, escalation_stats_from_db
 from creativesignal.eval.metrics import load_golden_set
 from creativesignal.llm import COST_LOG, total_spend
 
 st.set_page_config(page_title="Eval — CreativeSignal", layout="wide")
+inject_css()
 
 RESULTS_DIR = Path("eval/results")
 

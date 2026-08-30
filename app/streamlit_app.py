@@ -12,9 +12,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import streamlit as st
-from shared import corpus_warning, honesty_footer, page_header
+from shared import corpus_warning, honesty_footer, inject_css, page_header
 
 st.set_page_config(page_title="CreativeSignal", layout="wide")
+inject_css()
 
 page_header(
     "CreativeSignal",

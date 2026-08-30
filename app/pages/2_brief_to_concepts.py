@@ -18,7 +18,9 @@ import streamlit as st
 from shared import (
     creative_card,
     empty_state,
+    generating,
     honesty_footer,
+    inject_css,
     live_mode_allowed,
     page_header,
     render_trace,
@@ -33,6 +35,7 @@ from creativesignal.runs import build_run, list_runs, load_run, save_run
 from creativesignal.sources.curated import CuratedCorpusConnector
 
 st.set_page_config(page_title="Brief to concepts — CreativeSignal", layout="wide")
+inject_css()
 
 page_header(
     "Brief to concepts",
@@ -125,7 +128,10 @@ else:
         tone=tone,
         prohibited_claims=prohibited,
     )
-    with st.spinner("Retrieving evidence and generating concepts..."):
+    with generating(
+        "Retrieving evidence and generating concepts...",
+        detail="A live run typically takes 15–30 seconds.",
+    ):
         result = run_analyst(brief)
 
         if result.clarifying_question:

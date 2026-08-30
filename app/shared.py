@@ -7,9 +7,12 @@ colors (that is `.streamlit/config.toml`'s job alone).
 
 from __future__ import annotations
 
+import html
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator, Literal
 
 # Arrow's mimalloc allocator segfaults (SIGSEGV in `mi_thread_init`) when
 # pyarrow submodules are first imported inside Streamlit's script-runner
@@ -36,6 +39,176 @@ if str(REPO_ROOT / "src") not in sys.path:
 
 from creativesignal.schema import HONESTY_RULE  # noqa: E402
 
+# ---------------------------------------------------------------------------
+# Shared CSS (visual polish only)
+#
+# What lives here vs. in .streamlit/config.toml: config.toml stays the only
+# place *colors* are defined. This block covers what Streamlit theming cannot
+# express at all — border radius, shadows, spacing rhythm, and the reviewer
+# badge/pill shape. The only hues below are neutral rgba overlays plus the
+# three reviewer-severity colors, which AGENTS.md fixes as red / amber / gray
+# (the two accent colors + informational gray already used for flags).
+#
+# Selector note (Streamlit 1.41): st.container(border=True) renders
+# div[data-testid="stVerticalBlockBorderWrapper"] with the border applied via
+# a generated emotion class — there is no attribute distinguishing bordered
+# wrappers from unbordered ones. creative_card() therefore emits a zero-size
+# .cs-card marker, and cards are selected via :has(.cs-card).
+# ---------------------------------------------------------------------------
+
+_CSS = """<style>
+:root {
+  --cs-radius: 0.75rem;
+  --cs-card-shadow: 0 1px 2px rgba(30, 30, 30, 0.05), 0 2px 8px rgba(30, 30, 30, 0.04);
+  --cs-neutral-01: rgba(30, 30, 30, 0.035);
+  --cs-neutral-02: rgba(30, 30, 30, 0.08);
+  --cs-claim: #b42318;
+  --cs-claim-bg: rgba(180, 35, 24, 0.08);
+  --cs-claim-border: rgba(180, 35, 24, 0.30);
+  --cs-similarity: #96560a;
+  --cs-similarity-bg: rgba(150, 86, 10, 0.09);
+  --cs-similarity-border: rgba(150, 86, 10, 0.32);
+  --cs-info: #4a4a44;
+  --cs-info-bg: rgba(74, 74, 68, 0.07);
+  --cs-info-border: rgba(74, 74, 68, 0.25);
+}
+
+/* --- bordered containers: shared chrome -------------------------------- */
+[data-testid="stVerticalBlockBorderWrapper"],
+[data-testid="stExpander"] details {
+  border-radius: var(--cs-radius);
+}
+
+/* --- creative cards: shadow + spacing rhythm ---------------------------- */
+.cs-card { display: none; }
+[data-testid="stVerticalBlockBorderWrapper"]:has(.cs-card) {
+  border-radius: var(--cs-radius);
+  box-shadow: var(--cs-card-shadow);
+  margin-bottom: 0.5rem;
+}
+
+/* --- typography hierarchy ---------------------------------------------- */
+section.main h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  padding-bottom: 0.25rem;
+}
+section.main h2 {
+  font-size: 1.4rem;
+  font-weight: 650;
+  line-height: 1.3;
+  margin-top: 0.75rem;
+}
+section.main h3 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  line-height: 1.35;
+}
+section.main [data-testid="stCaptionContainer"] {
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--cs-info);
+}
+section.main hr { margin: 1.75rem auto; }
+
+/* --- buttons ------------------------------------------------------------ */
+.stButton button,
+[data-testid="stFormSubmitButton"] button {
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+/* --- metrics ------------------------------------------------------------ */
+[data-testid="stMetric"] {
+  background: var(--cs-neutral-01);
+  border-radius: var(--cs-radius);
+  padding: 0.75rem 1rem;
+}
+
+/* --- reviewer badge / pill --------------------------------------------- */
+.cs-badge {
+  display: inline-block;
+  padding: 0.12rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.5;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.cs-badge--claim {
+  color: var(--cs-claim);
+  background: var(--cs-claim-bg);
+  border-color: var(--cs-claim-border);
+}
+.cs-badge--similarity {
+  color: var(--cs-similarity);
+  background: var(--cs-similarity-bg);
+  border-color: var(--cs-similarity-border);
+}
+.cs-badge--info {
+  color: var(--cs-info);
+  background: var(--cs-info-bg);
+  border-color: var(--cs-info-border);
+}
+.cs-flag-message { font-size: 0.95rem; }
+
+/* --- loading-state detail line ------------------------------------------ */
+.cs-loading-detail {
+  font-size: 0.82rem;
+  color: var(--cs-info);
+  margin-top: 0.25rem;
+}
+</style>"""
+
+
+def inject_css() -> None:
+    """Inject the shared CSS. Call once per page, right after set_page_config.
+
+    Not done at import time: every page imports this module *before*
+    st.set_page_config, and an st call at import time would make Streamlit
+    raise "set_page_config() can only be called once" / ordering errors.
+    """
+    st.markdown(_CSS, unsafe_allow_html=True)
+
+
+def badge(label: str, kind: Literal["claim", "similarity", "info"] = "info") -> str:
+    """Pill HTML for one reviewer-style marker.
+
+    Render with ``st.markdown(badge(...), unsafe_allow_html=True)``. Kinds map
+    to the AGENTS.md flag palette: claim=red, similarity=amber, info=gray.
+    The label is HTML-escaped; it is always a fixed Literal-derived string.
+    """
+    safe_kind = kind if kind in ("claim", "similarity", "info") else "info"
+    return f'<span class="cs-badge cs-badge--{safe_kind}">{html.escape(label)}</span>'
+
+
+@contextmanager
+def generating(message: str = "Generating...", *, detail: str | None = None) -> Iterator[None]:
+    """The app's single loading pattern for live calls (LLM / retrieval / image).
+
+    Wraps ``st.spinner(message)`` and adds an optional styled detail line that
+    is cleared when the call completes, so every live call — including the
+    upcoming image-generation path — shows the same affordance.
+
+    ``detail`` is HTML-escaped: callers pass trusted literals, never user text.
+    """
+    slot = st.empty()
+    with st.spinner(message):
+        if detail:
+            slot.markdown(
+                f'<p class="cs-loading-detail">{html.escape(detail)}</p>',
+                unsafe_allow_html=True,
+            )
+        try:
+            yield
+        finally:
+            slot.empty()
+
 
 def page_header(title: str, caption: str) -> None:
     """`st.title` -> one-line caption. Identical skeleton on every page."""
@@ -56,6 +229,9 @@ def creative_card(result, show_scores: bool = False) -> None:
     """
     creative = getattr(result, "creative", result)
     with st.container(border=True):
+        # Zero-size marker lets the shared CSS target bordered *cards* via
+        # :has(.cs-card) — 1.41 gives bordered containers no usable attribute.
+        st.markdown('<span class="cs-card"></span>', unsafe_allow_html=True)
         st.markdown(f"**{creative.headline or '(no headline)'}**")
         if creative.body_copy:
             st.write(creative.body_copy)
@@ -133,21 +309,31 @@ def render_trace(trace) -> None:
             st.caption(f"Note: {note}")
 
 
-# Reviewer severities -> the two accent colours the UI direction allows.
-_FLAG_COLOR = {"claim": "red", "similarity": "orange", "info": "gray"}
+# Reviewer severities -> badge kinds. The red/amber/gray palette itself lives
+# in the CSS block above (the only flags palette the UI direction allows).
+_FLAG_KIND = {"claim": "claim", "similarity": "similarity", "info": "info"}
 
 
 def reviewer_flags(review) -> None:
-    """Render reviewer flags inline on a concept, evidence on expand."""
+    """Render reviewer flags inline on a concept, evidence on expand.
+
+    Flags are CSS pills via badge(); the flag-line → evidence-expander
+    structure is unchanged so the concept-display layout stays stable for
+    parallel work on this section.
+    """
     if review is None:
         return
     if not review.flags:
-        st.caption(":green[Reviewer: no flags raised.]")
+        st.markdown(badge("No flags raised", "info"), unsafe_allow_html=True)
         return
 
     for flag in review.flags:
-        color = _FLAG_COLOR.get(flag.severity, "gray")
-        st.markdown(f":{color}[**{flag.severity.upper()}** — {flag.message}]")
+        kind = _FLAG_KIND.get(flag.severity, "info")
+        st.markdown(
+            f'{badge(flag.severity.upper(), kind)} '
+            f'<span class="cs-flag-message">{html.escape(flag.message)}</span>',
+            unsafe_allow_html=True,
+        )
         with st.expander("Evidence for this flag"):
             st.write(flag.evidence)
             if flag.span:

@@ -18,6 +18,7 @@ from shared import (
     creative_card,
     empty_state,
     honesty_footer,
+    inject_css,
     page_header,
 )
 
@@ -25,6 +26,7 @@ from creativesignal.retrieval.hybrid import hybrid_search
 from creativesignal.sources.base import SearchFilters
 
 st.set_page_config(page_title="Explore — CreativeSignal", layout="wide")
+inject_css()
 
 page_header(
     "Explore the corpus",
