@@ -549,3 +549,38 @@ This is the same reasoning shape as the project's other reversals (#23, #26): a 
 **Dependency conflict found and resolved (same pattern as #6, #19, #30).** `diffusers` 0.40.0 requires `huggingface-hub>=1.23`; `transformers` and `sentence-transformers` both require `<1.0`. Installing current `diffusers` broke `import transformers` outright — which would have taken down the entire embedding/retrieval stack, not just image generation. Pinned `diffusers==0.31.0` + `huggingface-hub==0.36.2`, then verified beyond import: the full test suite (222 passing) and a real hybrid retrieval query returning correct semantically-matched results under the downgraded hub.
 
 **Status:** feasibility confirmed and dependencies pinned. The wrapper module, opt-in UI toggle, and `runs`-table persistence are the remaining build.
+ ## Entry #31 — `.env` silently ignored: `~/.zshrc` exports a blank `ANTHROPIC_API_KEY` (debugging)
+
+**Symptom.** `.env` was confirmed present, correctly formatted, and found successfully by `load_dotenv()` in isolation — yet the Streamlit app reported "No ANTHROPIC_API_KEY configured" every time, after every restart.
+
+**Root cause, found by instrumenting the real call path rather than re-testing the parts already confirmed working.** `~/.zshrc:11` contains `export ANTHROPIC_API_KEY=""`. Any terminal that sources that profile — including the one `streamlit run` is launched from — starts with `ANTHROPIC_API_KEY` already present in its process environment, set to an empty string. `python-dotenv`'s `load_dotenv()` defaults to `override=False`: if the variable already exists in `os.environ` at all, it leaves it alone, even if the existing value is empty and the `.env` file has a correct one sitting right next to it. `has_api_key()`/`_client()` then read `os.getenv("ANTHROPIC_API_KEY")` and get back `""`, which is falsy — indistinguishable, from the app's side, from ".env was never found."
+
+**Why isolated testing missed it.** Calling `has_api_key()` from a plain `python -c "..."` one-liner in an *already-open* Bash tool session — one that had not freshly sourced `~/.zshrc` — never had the blank variable in its environment to begin with, so it worked every time in exactly the way that made the bug look like it couldn't be real. The failure only reproduces in a shell that has actually sourced the profile, which is what a normal terminal launching `streamlit run` does and what my initial ad-hoc checks did not.
+
+**Diagnosis method, in order:**
+1. Confirmed `.env` exists, is well-formed, and `load_dotenv()`/`find_dotenv()` resolve it correctly from plain Python — ruled out the file itself.
+2. Traced `find_dotenv()`'s actual search algorithm from source rather than assuming cwd-based behavior: it walks upward from the *calling frame's file location* (here, `llm.py`'s own directory), which resolves correctly regardless of Streamlit's working directory or execution model — ruled out a path-resolution bug.
+3. Instrumented `has_api_key()` itself to write its actual runtime state (pre-existing env value, `find_dotenv()` result, post-load value) to a file, then drove the **real running app** through the browser rather than a synthetic reproduction — surfaced `env_already_set` before ever changing the check to look at the *pre*-existing value.
+4. Corrected the instrumentation to capture the environment variable's value *before* `load_dotenv()` ran (not after), which is what actually named the mechanism: `load_dotenv(override=False)` skipping a variable that already exists.
+5. Grepped shell profiles directly rather than guessing further — `~/.zshrc:11` was the source in one line.
+
+**Fix.** `load_dotenv(override=True)` at both call sites (`_client()` and `has_api_key()` in `llm.py`, and the corresponding call in `ragas_eval.py`'s judge-LLM setup). `.env` now always wins over whatever the shell happened to export, which is the correct policy for a project-local secret file regardless of what a user's personal shell profile does.
+
+**Verified, not assumed:** reproduced the exact failure with `ANTHROPIC_API_KEY=""` forced into the environment before the fix (confirmed `has_api_key()` returned `False`), confirmed the fix resolves it in isolation, then re-confirmed under a real `zsh -c "source ~/.zshrc && ..."` invocation — the literal condition the bug report described — both before (fails) and after (passes) the fix.
+
+**Test added:** `tests/test_llm.py`, including one test that pins the actual fix (`load_dotenv` must be called with `override=True`) so a future refactor that quietly drops the kwarg fails loudly rather than silently regressing.
+
+**Not the user's `.zshrc` to fix.** The blank export may be intentional elsewhere (e.g., to make an unset key explicit rather than absent) — the fix belongs in this project's code, which cannot assume every developer's shell environment is clean, not in a personal dotfile outside the repo's control.
+
+## Entry #32 — Eval dashboard never wired to read real generation results (W5.10, debugging)
+
+**What was reported.** The eval dashboard still showed "not yet measured" for citation correctness and Ragas after both had been run for real (Entry #29/#30: citation correctness 1.000 n=15, Ragas answer relevancy 0.57–0.63 n=15).
+
+**Not a staleness bug — a missing-wiring bug.** The page was written at W5.10, before any generation run existed, and was never revisited after those runs landed. Concretely: it never imported `citation_correctness` or `list_runs`, never read `eval/results/ragas_eval.json` (only `retrieval_eval_*.json`, a different file for a different metric), and its "Not yet measured" section was static markdown text listing all four generation metrics as permanently unmeasured — not a check against any data source at all. The annotator section and cost section *were* wired to live queries and were already showing real numbers (98 annotations, $0.535) the whole time; only the generation-metrics section had no wiring.
+
+**Fix.** Added a Generation section computing citation correctness live from the `runs` table (same `citation_correctness()` function the eval harness uses, so the dashboard and the CLI report cannot silently disagree) and loading `ragas_eval.json` directly, including its `n_scored` breakdown so faithfulness's near-total parse-failure rate (Entry #30) is visible as "unusable, 0 of 15 scored" rather than a blank or a misleadingly bare number. Rewrote the "Not yet measured" block to state only what is genuinely unmeasured — the golden set and the human rubric — instead of four items, two of which had real results sitting on disk unread.
+
+**Also fixed in passing:** the retrieval empty-state message still said "the corpus is 9 synthetic ads," a factual claim that stopped being true once Tier-3 landed (B1). Corrected to name the real blocker (the golden set) rather than a corpus-size limitation that no longer exists.
+
+**Verified against the actual artifacts, not assumed:** computed citation correctness and read `ragas_eval.json` directly in a script first, then loaded the real running page and read its rendered text, and confirmed the two matched exactly (1.000/15, 0.573, unusable/0 of 15, $0.5350) before considering this done.
+\
