@@ -73,7 +73,9 @@ W2.6 (Human, 20 queries × 3–5 hand-labeled relevant creative IDs) has not bee
 **Status:** Standing practice for all remaining tasks.
 
 
-## Entry #5 — Local environment setup + Phoenix pytest plugin bug
+## Entry #35 — Local environment setup + Phoenix pytest plugin bug
+
+*Renumbered from #5 to resolve a collision: two different entries — this one and the F1 proxy-bucket decision immediately below — were both written as #5 on branches that later merged. This one moved because the other is referenced by the literal string `"Entry #5"` in `insight/tree.py`, `test_tree.py`, and `load_tier3.py`. Left in place rather than sorted to the end, since its content is the W1.3 environment setup and belongs here chronologically.*
 
 **Setup (one-time, done W1.3):** Python 3.12 not present by default on macOS — installed via `brew install python@3.12` (landed at `/opt/homebrew/bin/python3.12`). Created venv with `python3.12 -m venv .venv`, activated with `source .venv/bin/activate`, then `pip install -e .` to pull all 14 pinned dependencies.
 
