@@ -267,3 +267,33 @@ def test_ui_renders_nothing_at_all_when_disabled(monkeypatch):
     shared, calls = _stub_streamlit(monkeypatch)
     shared.concept_image(_concept(), run_id="r", enabled=False)
     assert not calls["warning"] and not calls["image"] and not calls["caption"]
+
+
+def test_whole_rendered_prompt_stays_within_the_clip_budget():
+    """Regression: v1 budgeted only the direction, not the style suffix.
+
+    Real visual_direction text (~250 chars) plus v1's 134-char suffix ran
+    ~92-98 tokens against CLIP's 77-token cap, and the silently-discarded
+    tail was exactly the "no text, no lettering" negative.
+    """
+    from creativesignal.imagegen import MAX_PROMPT_CHARS
+
+    realistic = (
+        "Close-up macro shot of a fingertip pressing into bare skin on a "
+        "forearm in soft, cool daylight, with a faint visible texture of "
+        "dry/flaky skin on one side of frame and smoother skin on the other, "
+        "muted winter-blue and skin-tone palette, clinical but warm mood."
+    )
+    prompt = build_prompt(realistic)
+    assert len(prompt) <= MAX_PROMPT_CHARS
+
+
+def test_the_no_text_negative_always_survives_truncation():
+    """The suffix carries the instruction we can least afford to lose."""
+    prompt = build_prompt("a jar " * 400)
+    assert prompt.endswith("no text, no lettering")
+
+
+def test_truncation_breaks_on_a_word_boundary():
+    prompt = build_prompt("supercalifragilistic " * 60)
+    assert "supercalifragilisti," not in prompt  # no mid-word cut

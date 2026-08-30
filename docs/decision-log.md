@@ -598,3 +598,28 @@ Entry #33 added `Concept.visual_direction` as the input to image generation, but
 **The field asks for what a camera would see** — subject, composition, lighting, mood, palette — and explicitly forbids slogans, in-image text, and claims. Two reasons: diffusion models render text as gibberish (visible in the first real generations), and an image carrying a claim would route around the Reviewer entirely, which only inspects concept *text*. Keeping claims out of the image brief keeps the reviewer's surface complete.
 
 **Not yet verified against the live API.** The end-to-end check — that Claude actually returns a usable `visual_direction` under v2 — could not run: the Anthropic account's credit balance is exhausted (`400 invalid_request_error: Your credit balance is too low`). What *is* verified: v2 renders and requests the field, v1 is unchanged, the schema round-trips it, and the fallback path works (all three images on the replayed lip-balm run were generated through it). The prompt-to-model round trip is the one link untested, and it is untested for a billing reason, not a code reason.
+
+## Entry #36 — CLIP truncation silently dropped the "no text" negative (image_prompt_v2)
+
+**Found by running the feature for real, not by testing it.** The first live end-to-end generation printed a warning I would not have seen from unit tests:
+
+```
+Token indices sequence length is longer than the specified maximum (88 > 77)
+The following part of your input was truncated because CLIP can only handle
+sequences up to 77 tokens: ['detail, no text, no watermark, no lettering']
+```
+
+**Cause.** `MAX_PROMPT_CHARS = 300` budgeted the `visual_direction` *only*, ignoring the 134-character style suffix appended after it. Real directions from `concept_v2` run ~235-260 characters, so every rendered prompt landed at ~92-98 tokens against CLIP's 77-token cap. CLIP discards the tail — and the tail was `no text, no watermark, no lettering`, the single instruction most needed, dropped on **every generation since the feature was built**. The gibberish lettering visible on the first batch of images is the direct consequence.
+
+**Fix — `image_prompt_v2`, plus budgeting the whole rendered prompt:**
+- The budget now covers the full prompt, computed as `MAX_PROMPT_CHARS - len(suffix)`, so the suffix can never be the part that gets cut.
+- The suffix is shortened to `advertising product photography, no text, no lettering`. The dropped terms (`skincare, clean composition, soft studio lighting, high detail`) were largely redundant — `concept_v2`'s directions already specify subject, lighting, and mood, so the suffix was spending scarce tokens restating them.
+- Truncation happens on a word boundary rather than mid-word.
+
+Measured after: the same three directions render at 253-257 characters (~64 tokens), comfortably under the cap, and a regeneration produced **no truncation warning**.
+
+**Why this is a versioned prompt change, not an edit.** Same rule as Entry #34: `eval/image_log.csv` records `prompt_version` per generated image, so the four images already produced under v1 must keep pointing at v1.
+
+**Lesson, and it is the recurring one.** Unit tests passed throughout — they asserted the prompt was *shorter than a limit I had chosen*, not that it fit *the limit the model actually enforces*. The bug lived in the gap between those two, and only surfaced when a real model rejected the real input. Same shape as Entries #6, #19, #23, #28 and #30: the tests encoded my assumption, so they could never contradict it.
+
+**Honest caveat on the outcome:** the regenerated image still shows faint gibberish text on the jars. `no text` is a weak negative in a 1-step distilled model with `guidance_scale=0.0` — there is no classifier-free guidance for it to act through. The fix restores the instruction; it does not guarantee obedience. Consistent with Entry #33's framing: a mood reference, not a finished asset.

@@ -217,3 +217,6 @@ timestamp,task,model,prompt_version,input_tokens,output_tokens,cost_usd,latency_
 2026-08-28T23:38:45+00:00,generate_concepts,claude-sonnet-5,concept_v1,1431,1530,0.027243,16.773
 2026-08-28T23:39:24+00:00,repro,claude-sonnet-5,concept_v1,1635,1411,0.02607,15.85
 2026-08-28T23:40:16+00:00,repro2,claude-sonnet-5,concept_v1,1666,1852,0.032778,20.21
+2026-08-30T06:28:50+00:00,credit_check,claude-haiku-4-5-20251001,,12,4,3.2e-05,0.655
+2026-08-30T06:29:30+00:00,generate_concepts,claude-sonnet-5,concept_v2,1751,2356,0.040593,25.24
+2026-08-30T06:30:15+00:00,generate_concepts,claude-sonnet-5,concept_v2,1763,2296,0.039729,26.693

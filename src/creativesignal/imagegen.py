@@ -38,7 +38,7 @@ INFERENCE_STEPS = 1
 # sd-turbo is trained for guidance_scale=0.0; any other value degrades it.
 GUIDANCE_SCALE = 0.0
 
-PROMPT_NAME = "image_prompt_v1"
+PROMPT_NAME = "image_prompt_v2"
 IMAGE_DIR = Path("data/generated_images")
 IMAGE_LOG = Path("eval/image_log.csv")
 
@@ -47,9 +47,15 @@ IMAGE_LOG_FIELDS = (
     "width", "height", "steps", "latency_s", "path",
 )
 
-# Long prompts are silently truncated by the CLIP text encoder at 77 tokens;
-# trimming here keeps the effective prompt legible rather than mysteriously cut.
-MAX_PROMPT_CHARS = 300
+# CLIP's text encoder caps at 77 tokens and silently discards the tail beyond
+# it. v1 budgeted only the visual_direction and ignored the style suffix
+# appended after it, so every real prompt ran ~92-98 tokens and the truncated
+# tail was exactly the "no text, no lettering" negative — the instruction most
+# needed, dropped on every generation. The budget now covers the WHOLE
+# rendered prompt, and v2's suffix is shortened so more of the direction
+# survives. ~4 chars/token is the usual English rule of thumb; 260 leaves
+# headroom under 77 tokens.
+MAX_PROMPT_CHARS = 260
 
 
 class ImageGenerationUnavailable(RuntimeError):
@@ -133,8 +139,16 @@ def build_prompt(visual_direction: str, fallback: str = "") -> str:
             "Concept has neither a visual direction nor copy to derive one "
             "from, so there is nothing to generate an image of."
         )
-    direction = direction[:MAX_PROMPT_CHARS]
-    return load_prompt(PROMPT_NAME).format(visual_direction=direction).strip()
+
+    template = load_prompt(PROMPT_NAME)
+    # Budget the rendered prompt, not just the direction: the style suffix is
+    # part of what CLIP counts, and it holds the negatives we cannot afford to
+    # lose. Truncate the direction on a word boundary so the suffix always fits.
+    suffix_len = len(template.format(visual_direction="").strip())
+    available = max(MAX_PROMPT_CHARS - suffix_len, 40)
+    if len(direction) > available:
+        direction = direction[:available].rsplit(" ", 1)[0].rstrip(" ,.;:")
+    return template.format(visual_direction=direction).strip()
 
 
 @lru_cache(maxsize=1)
