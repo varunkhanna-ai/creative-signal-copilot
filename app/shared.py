@@ -196,10 +196,16 @@ def concept_image(concept, run_id: str = "", enabled: bool = False) -> None:
     )
     from creativesignal.runs import attach_image
 
+    # The anatomy caveat is measured, not hedging: 4 of 4 sampled compositions
+    # involving people or hands came back malformed, at both 1 and 4 inference
+    # steps (Entry #37). Stated on every image because the failure is obvious
+    # once noticed and misleading if not.
     caption = (
         "Generated locally from the concept's visual direction. A mood "
         "reference for a designer, not a finished asset — and not evidence "
-        "of anything about the retrieved ads."
+        "of anything about the retrieved ads. Compositions involving people "
+        "or hands are usually malformed at this quality setting; "
+        "product-only framing is far more reliable."
     )
 
     # Already generated: replay costs nothing.

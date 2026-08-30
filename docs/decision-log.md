@@ -623,3 +623,31 @@ Measured after: the same three directions render at 253-257 characters (~64 toke
 **Lesson, and it is the recurring one.** Unit tests passed throughout — they asserted the prompt was *shorter than a limit I had chosen*, not that it fit *the limit the model actually enforces*. The bug lived in the gap between those two, and only surfaced when a real model rejected the real input. Same shape as Entries #6, #19, #23, #28 and #30: the tests encoded my assumption, so they could never contradict it.
 
 **Honest caveat on the outcome:** the regenerated image still shows faint gibberish text on the jars. `no text` is a weak negative in a 1-step distilled model with `guidance_scale=0.0` — there is no classifier-free guidance for it to act through. The fix restores the instruction; it does not guarantee obedience. Consistent with Entry #33's framing: a mood reference, not a finished asset.
+
+## Entry #37 — Raising inference steps does not fix composition (experiment; `INFERENCE_STEPS` stays 1)
+
+Entry #33 shipped `sd-turbo` at 1 inference step. The first real generations (Entry #36) produced one good product shot and two anatomically broken images — merged faces, extra hands. The obvious hypothesis was that 1 step was simply too few. It was tested rather than assumed.
+
+**Method.** Same `visual_direction` text, same model, same `guidance_scale=0.0`; only `num_inference_steps` varied. One sample of each failed concept at 1 and 4 steps, then — because n=1 is not evidence — three additional 4-step samples of the face composition. Experiment output was written to separate folders so the 1-step baselines survived for comparison, and both the images and their log rows were removed afterwards: a benchmark is not product output.
+
+**Latency, measured from `eval/image_log.csv`:**
+
+| Setting | n | Samples (s) | Mean |
+|---|---|---|---|
+| 1 step | 2 | 5.7, 10.5 | **8.1 s** |
+| 4 steps | 5 | 27.0, 33.1, 10.7, 16.4, 20.7 | **21.6 s** |
+
+**~2.7× slower.** Variance at 4 steps is wide (10.7–33.1 s), likely thermal or memory pressure on a machine where a single 1080×1080 generation already reserves ~16 GB — so treat the mean as approximate, not a benchmark.
+
+**Result: 4 steps did not fix the anatomy. 4 of 4 face samples failed.**
+
+- *What improved:* rendering fidelity, clearly and consistently — sharper skin texture, better micro-detail and lighting.
+- *What did not:* structure. Sample 1, three merged faces. Sample 2, multiple noses and mouths. Sample 3, roughly five merged faces and a forest of hands. Sample 4 came closest to usable — one coherent face — but still carried a second partial face and malformed fingers. One near-miss in four, with no automatic way to detect the failures, is not a usable rate.
+
+**Why more steps was never going to work, in hindsight.** Step count governs *denoising refinement*, not *compositional coherence*. Extra steps render a wrong structure more sharply; they do not make it right. The merged-anatomy failure is a capability limit of a 1–4 step distilled model at `guidance_scale=0.0` — with no classifier-free guidance, "one person" has no mechanism to act as a constraint, the same reason `no text` is a weak negative (Entry #36). The 2.7× latency buys real texture quality and none of the thing that was actually broken.
+
+**Decision: `INFERENCE_STEPS` stays 1.** Paying 2.7× for a fix that does not fix the defect is the wrong trade, and 8 s keeps an opt-in action interactive.
+
+**The failure is content-shaped, not step-shaped.** Product-only compositions work well at 1 step (the frosted-jar image from Entry #36 is genuinely usable); anything with human anatomy fails at *both* settings. That distinction is now stated on every rendered image in the UI, so a viewer is not left to infer it from a bad result.
+
+**Noted as a future option, deliberately not built:** steering `concept_v2`'s `visual_direction` toward product-forward framing ("product on surface, no people") would play to what the model reliably does, cost nothing at runtime, and target the real failure mode. That is a scope decision about what the product *recommends visually*, not a rendering tweak, and is left open rather than taken tonight.
