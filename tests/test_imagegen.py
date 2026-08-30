@@ -190,3 +190,80 @@ def test_generate_image_wraps_a_model_error_as_failed(monkeypatch, tmp_path):
 def test_unload_pipeline_is_safe_when_nothing_is_loaded():
     imagegen.unload_pipeline()
     imagegen.unload_pipeline()
+
+
+# --- UI-facing failure handling (Entry #33) -------------------------------
+# `concept_image()` is what the page actually calls, so its degradation path
+# is tested here rather than only the wrapper's. A crash in it takes down the
+# whole concepts section, not just one image.
+
+
+def _stub_streamlit(monkeypatch):
+    """Replace the streamlit surface `concept_image` touches; record calls."""
+    import sys
+    import types
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "app"))
+    import shared
+
+    calls = {"warning": [], "image": [], "caption": []}
+
+    class _Spinner:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(
+        shared,
+        "st",
+        types.SimpleNamespace(
+            warning=lambda m: calls["warning"].append(m),
+            image=lambda p, **k: calls["image"].append(p),
+            caption=lambda m: calls["caption"].append(m),
+            spinner=lambda m: _Spinner(),
+        ),
+    )
+    return shared, calls
+
+
+def _concept():
+    from creativesignal.schema import Concept
+
+    return Concept(title="T", headline="H", body_copy="B", cited_creative_ids=["c1"])
+
+
+def test_ui_warns_and_survives_when_the_stack_is_unavailable(monkeypatch):
+    shared, calls = _stub_streamlit(monkeypatch)
+    monkeypatch.setattr(
+        imagegen,
+        "generate_image",
+        lambda *a, **k: (_ for _ in ()).throw(ImageGenerationUnavailable("no MPS")),
+    )
+    shared.concept_image(_concept(), run_id="r", enabled=True)
+
+    assert calls["warning"], "an unavailable stack must say so, not fail silently"
+    assert "unaffected" in calls["warning"][-1]
+    assert not calls["image"], "no image may be rendered when generation failed"
+
+
+def test_ui_warns_and_survives_when_one_generation_fails(monkeypatch):
+    shared, calls = _stub_streamlit(monkeypatch)
+    monkeypatch.setattr(
+        imagegen,
+        "generate_image",
+        lambda *a, **k: (_ for _ in ()).throw(ImageGenerationFailed("MPS OOM")),
+    )
+    shared.concept_image(_concept(), run_id="r", enabled=True)
+
+    assert "MPS OOM" in calls["warning"][-1], "the reason must reach the user"
+    assert not calls["image"]
+
+
+def test_ui_renders_nothing_at_all_when_disabled(monkeypatch):
+    """Off is the default. It must be silent — not an error, not a blank space."""
+    shared, calls = _stub_streamlit(monkeypatch)
+    shared.concept_image(_concept(), run_id="r", enabled=False)
+    assert not calls["warning"] and not calls["image"] and not calls["caption"]
