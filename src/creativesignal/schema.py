@@ -162,6 +162,13 @@ class Concept(BaseModel):
     rationale: str = ""
     cited_creative_ids: list[str] = Field(default_factory=list)
     evidence_note: str = ""
+    # Entry #2 defined this field but left it unscheduled; Entry #33 schedules
+    # it as the input to local image generation. Defaults to "" so the six
+    # runs persisted before this existed still load and replay.
+    visual_direction: str = ""
+    # Path to a generated image, relative to the repo root. Set only when the
+    # user explicitly opts in (Entry #33) — absent is the normal case.
+    image_path: Optional[str] = None
 
     @property
     def is_cited(self) -> bool:
