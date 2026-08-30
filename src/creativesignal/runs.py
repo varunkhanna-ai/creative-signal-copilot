@@ -141,3 +141,34 @@ def build_run(
         prompt_versions={"concepts": "concept_v1", "summary": "analyst_summary_v1"},
         token_cost_usd=token_cost_usd,
     )
+
+
+def attach_image(
+    run_id: str, concept_title: str, image_path: str, db_path: Path = DB_PATH
+) -> bool:
+    """Record a generated image against one concept in a persisted run.
+
+    Image generation is opt-in and happens *after* a run is saved (Entry #33),
+    so this updates the stored run in place rather than rewriting it. Returns
+    False if the run or the concept is not found, so a caller can report the
+    mismatch instead of silently doing nothing.
+
+    Only `image_path` changes — the concept's text is left exactly as it was
+    generated and reviewed, so attaching an image can never alter the content
+    the reviewer already passed judgment on.
+    """
+    run = load_run(run_id, db_path)
+    if run is None:
+        return False
+
+    matched = False
+    for concept in run.concepts:
+        if concept.title == concept_title:
+            concept.image_path = image_path
+            matched = True
+            break
+    if not matched:
+        return False
+
+    save_run(run, db_path)
+    return True
