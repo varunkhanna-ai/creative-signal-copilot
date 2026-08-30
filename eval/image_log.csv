@@ -1,0 +1,4 @@
+timestamp,run_id,concept_title,model,prompt_version,width,height,steps,latency_s,path
+2026-08-30T05:52:10+00:00,run_075a351d1056,Winter Balm Bundle,stabilityai/sd-turbo,image_prompt_v1,1080,1080,1,6.09,data/generated_images/run_075a351d1056/winter-balm-bundle.png
+2026-08-30T05:52:20+00:00,run_075a351d1056,Instant Hydration Claim,stabilityai/sd-turbo,image_prompt_v1,1080,1080,1,10.34,data/generated_images/run_075a351d1056/instant-hydration-claim.png
+2026-08-30T05:52:46+00:00,run_075a351d1056,Winter Skin Survival Kit,stabilityai/sd-turbo,image_prompt_v1,1080,1080,1,26.031,data/generated_images/run_075a351d1056/winter-skin-survival-kit.png

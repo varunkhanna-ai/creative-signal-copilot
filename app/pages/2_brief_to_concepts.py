@@ -16,9 +16,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 from shared import (
+    concept_image,
     creative_card,
     empty_state,
     honesty_footer,
+    image_generation_status,
     live_mode_allowed,
     page_header,
     render_trace,
@@ -60,6 +62,21 @@ with st.sidebar:
         "Demo mode replays stored runs with zero API calls. Live mode runs "
         "the agent and costs tokens."
     )
+
+    # Entry #33. Off by default: local generation costs no money, but ~6s and
+    # most of this machine's unified memory per image is a real cost the user
+    # should choose to pay. Already-generated images always display regardless.
+    st.subheader("Images")
+    generate_images = st.checkbox("Generate concept images", value=False)
+    if generate_images:
+        _images_ok, _images_reason = image_generation_status()
+        if _images_ok:
+            st.caption(
+                "Runs locally on this machine — no API key, no per-image cost. "
+                "Roughly 6s per image, generated one at a time."
+            )
+        else:
+            st.warning(_images_reason)
 
 # --- demo mode: replay ----------------------------------------------------
 
@@ -203,6 +220,7 @@ for i, concept in enumerate(run.concepts, start=1):
             "Cites: " + (", ".join(f"`{c}`" for c in concept.cited_creative_ids) or "none")
         )
         reviewer_flags(reviews_by_title.get(concept.title))
+        concept_image(concept, run_id=run.run_id, enabled=generate_images)
 
 st.subheader("Export")
 source_urls = {c.creative_id: c.source_url for c in retrieved if c.source_url}
