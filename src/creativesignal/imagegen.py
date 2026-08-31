@@ -75,6 +75,77 @@ class ImageGenerationFailed(RuntimeError):
     """
 
 
+class ImageGenerationSkipped(RuntimeError):
+    """Raised when generation was deliberately not attempted.
+
+    A third, distinct outcome: nothing is broken and nothing failed — the
+    request was declined because it would reliably produce a bad image
+    (Entry #38). Kept separate from `ImageGenerationFailed` so the UI can
+    say "skipped, here's why" rather than reporting an error for correct
+    behaviour.
+    """
+
+
+# Second-layer guard against the anatomy failure mode (Entry #37: 4 of 4
+# human-subject compositions came back malformed, at both 1 and 4 steps).
+# Layer one is the concept_v3 prompt, which asks for product-only framing;
+# this catches the cases where the model ignores it, or where the input is an
+# older run's visual_direction written under v2, or the ad-copy fallback.
+#
+# Matched as whole words on the visual_direction only. Word-boundary matching
+# matters: substring matching would flag "skincare" for "skin" and "brand"
+# for "hand", vetoing almost every legitimate product description.
+HUMAN_ANATOMY_TERMS: tuple[str, ...] = (
+    # people
+    "person", "people", "man", "woman", "men", "women", "girl", "boy",
+    "model", "models", "figure", "someone", "human", "child", "adult",
+    # body parts
+    "hand", "hands", "finger", "fingers", "fingertip", "fingertips",
+    "face", "faces", "facial", "skin", "arm", "arms", "forearm", "wrist",
+    "leg", "legs", "body", "shoulder", "shoulders", "neck", "cheek",
+    "cheeks", "lip", "lips", "eye", "eyes", "eyelash", "eyelashes",
+    "brow", "brows", "eyebrow", "eyebrows", "nose", "mouth", "hair",
+    "palm", "palms", "knuckle", "knuckles", "nail", "nails",
+    # actions that imply a person
+    "applying", "apply", "touching", "touch", "holding", "hold", "massaging",
+    "rubbing", "smiling", "posing", "wearing", "portrait", "selfie",
+    "hands-on", "self-care",
+)
+
+
+# Negation cues. A direction saying "no hands or skin visible" is describing
+# a product-only shot and must NOT be skipped — and concept_v3, which asks
+# for no people, makes that phrasing *more* likely, not less. Real v2 output
+# already contained "no hands or skin visible" on an otherwise ideal
+# product flat-lay. Spans from a negation cue to the next clause boundary are
+# removed before matching. See Entry #38.
+_NEGATION_SPAN = r"\b(?:no|without|free of|excluding|absent|minus)\b[^,.;]*"
+_HYPHEN_FREE = r"\b[a-z]+-free\b"
+
+
+def find_human_subject(text: str) -> str | None:
+    """Return the first human-anatomy term in `text`, or None if clean.
+
+    Whole-word and case-insensitive, ignoring negated spans. Returns the
+    matched term rather than a bool so callers can tell the user exactly what
+    tripped the guard — a bare "skipped" with no reason is the kind of silent
+    behaviour this project treats as a defect.
+    """
+    import re
+
+    if not text:
+        return None
+    lowered = text.lower()
+    # Drop negated spans first, so "no hands visible" reads as clean while
+    # "a hand applying cream, no text" still trips on "hand".
+    scannable = re.sub(_NEGATION_SPAN, " ", lowered)
+    scannable = re.sub(_HYPHEN_FREE, " ", scannable)
+    for term in HUMAN_ANATOMY_TERMS:
+        if re.search(rf"\b{re.escape(term)}\b", scannable):
+            return term
+    return None
+
+
 @dataclass(frozen=True)
 class GeneratedImage:
     """A completed generation plus what it cost — the pair the log needs."""
@@ -96,6 +167,34 @@ class GeneratedImage:
             return str(self.path)
 
 
+def is_streamlit_cloud() -> bool:
+    """True when running on Streamlit Community Cloud.
+
+    Checked before anything else in `is_available()` because the deployed app
+    must never offer this feature: the host is Linux with no MPS, `torch` and
+    `diffusers` are deliberately not in `requirements.txt` (they would add
+    gigabytes to a build that cannot use them), and a first call would try to
+    pull ~4.8GB of weights onto an ephemeral container.
+
+    No single official env var identifies the platform, so this checks the
+    three signals it actually sets, any of which is sufficient. Erring toward
+    a false positive is the safe direction — it hides a feature that would
+    not have worked there anyway.
+    """
+    import os
+    import sys
+
+    # Deliberately NOT keyed on STREAMLIT_SERVER_HEADLESS: that is set by any
+    # `streamlit run --server.headless true`, including local development,
+    # and would disable the feature exactly where it works.
+    if os.environ.get("STREAMLIT_SHARING_MODE"):
+        return True
+    if os.environ.get("HOSTNAME", "").startswith("streamlit"):
+        return True
+    # Cloud checks the repo out under /mount/src/<repo>.
+    return any(str(p).startswith("/mount/src") for p in sys.path)
+
+
 def is_available() -> tuple[bool, str]:
     """Can local generation run here? Returns (ok, human-readable reason).
 
@@ -103,6 +202,13 @@ def is_available() -> tuple[bool, str]:
     rather than a symptom of it. Never raises — this is the probe callers use
     to decide whether to offer the feature at all.
     """
+    if is_streamlit_cloud():
+        return False, (
+            "Local image generation is disabled on the deployed app — it "
+            "needs Apple Silicon (MPS) and a ~4.8GB local model. Run the app "
+            "locally on a Mac to use it."
+        )
+
     try:
         import torch
     except ImportError:
@@ -258,10 +364,24 @@ def generate_image(
 ) -> GeneratedImage:
     """Generate one square image locally. The single entry point.
 
-    Raises `ImageGenerationUnavailable` if the stack cannot run at all, or
-    `ImageGenerationFailed` if this specific attempt failed — callers are
-    expected to distinguish the two (disable the feature vs. flag one concept).
+    Raises `ImageGenerationUnavailable` if the stack cannot run at all,
+    `ImageGenerationSkipped` if the direction describes a human subject the
+    model cannot render reliably, or `ImageGenerationFailed` if this specific
+    attempt failed. Callers are expected to distinguish all three (disable
+    the feature / explain the skip / flag one concept).
     """
+    # Guard before the pipeline loads: a skipped request should cost nothing,
+    # not 30s of model load followed by a refusal.
+    source_text = (visual_direction or "").strip() or (fallback_text or "").strip()
+    matched = find_human_subject(source_text)
+    if matched:
+        raise ImageGenerationSkipped(
+            "Image generation skipped — this concept's visual direction "
+            f"includes human-subject elements (matched {matched!r}), which "
+            "this model cannot render reliably. Product-only framing works; "
+            "see docs/decision-log.md Entry #37."
+        )
+
     prompt = build_prompt(visual_direction, fallback=fallback_text)
     pipe = _pipeline()  # may raise ImageGenerationUnavailable
 

@@ -22,11 +22,12 @@ from creativesignal.schema import Concept, Pattern, coverage_statement
 from creativesignal.sources.base import SearchFilters
 from creativesignal.sources.curated import DB_PATH, CuratedCorpusConnector
 
-# v2 adds `visual_direction`, the input to local image generation (Entry
-# #33). A new file rather than an edit to v1: prompts are versioned
-# (AGENTS.md) and the six already-persisted runs record concept_v1, so
-# overwriting it would silently misattribute what produced them.
-CONCEPT_PROMPT = "concept_v2"
+# Prompt lineage: v1 was the original; v2 added `visual_direction` (Entry
+# #34); v3 constrains it to product-only framing (Entry #38). Each is a new
+# file rather than an edit, because prompts are versioned (AGENTS.md) and
+# every persisted run stamps the version that produced it — editing one in
+# place would make old runs claim provenance they do not have.
+CONCEPT_PROMPT = "concept_v3"
 
 
 # --- typed I/O ------------------------------------------------------------

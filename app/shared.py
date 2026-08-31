@@ -191,6 +191,7 @@ def concept_image(concept, run_id: str = "", enabled: bool = False) -> None:
 
     from creativesignal.imagegen import (
         ImageGenerationFailed,
+        ImageGenerationSkipped,
         ImageGenerationUnavailable,
         generate_image,
     )
@@ -232,6 +233,12 @@ def concept_image(concept, run_id: str = "", enabled: bool = False) -> None:
                 f"Image generation is unavailable on this machine: {exc} "
                 "Everything else on this page is unaffected."
             )
+            return
+        except ImageGenerationSkipped as exc:
+            # Not an error: the guard working as designed (Entry #38). Shown
+            # as info, not a warning, so correct behaviour does not read as
+            # a fault.
+            st.info(str(exc))
             return
         except ImageGenerationFailed as exc:
             st.warning(f"Could not generate an image for this concept: {exc}")

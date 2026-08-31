@@ -651,3 +651,36 @@ Entry #33 shipped `sd-turbo` at 1 inference step. The first real generations (En
 **The failure is content-shaped, not step-shaped.** Product-only compositions work well at 1 step (the frosted-jar image from Entry #36 is genuinely usable); anything with human anatomy fails at *both* settings. That distinction is now stated on every rendered image in the UI, so a viewer is not left to infer it from a bad result.
 
 **Noted as a future option, deliberately not built:** steering `concept_v2`'s `visual_direction` toward product-forward framing ("product on surface, no people") would play to what the model reliably does, cost nothing at runtime, and target the real failure mode. That is a scope decision about what the product *recommends visually*, not a rendering tweak, and is left open rather than taken tonight.
+
+## Entry #38 — Two-layer product-only guard against the anatomy failure (implements the option deferred in #37)
+
+Entry #37 measured the failure — 4 of 4 human-subject compositions malformed, at both 1 and 4 inference steps — and left "steer toward product-only framing" as a noted future option. This implements it as the permanent fix, in two independent layers so neither is a single point of failure.
+
+**Layer 1 — `concept_v3` asks for product-only compositions.** The `visual_direction` field now requests the product, packaging, textures, palette, lighting, and setting, and explicitly forbids people, hands, faces, skin, fingers, body parts, and anyone applying/holding/touching.
+
+*A new prompt file, not an edit to v2* — the same rule as Entry #34. `run_3647f7fdcfdb` is stamped `concepts=concept_v2` and is precisely the run whose directions produced the malformed images; editing v2 in place would make that run claim provenance from a prompt saying "no people," which is the misattribution the versioning discipline exists to prevent. Lineage: v1 original → v2 added the field → v3 constrains it.
+
+**Layer 2 — a keyword guard before generation.** `find_human_subject()` scans the direction for ~60 anatomy terms and raises `ImageGenerationSkipped` on a match. It exists because layer 1 is a *request*, not a guarantee: the model can ignore it, older runs carry v2-era directions, and the ad-copy fallback path (used by every pre-#33 run) is not governed by the prompt at all.
+
+**Chose skip over substitution.** The brief offered either. Substituting a generic "clean product photography, studio lighting" description would render an image that does *not* depict the concept's stated visual direction, shown under a caption claiming it does — a small lie, and exactly the kind this project's spine forbids. Skipping states what happened and why. The message names the matched term, because a bare "skipped" with no reason is the silent behaviour this codebase treats as a defect.
+
+`ImageGenerationSkipped` is a third exception type, distinct from `Unavailable` (stack broken) and `Failed` (this attempt broke). It is rendered with `st.info`, not `st.warning`: correct behaviour should not read as a fault. The guard runs *before* the pipeline loads, so a skip costs nothing rather than 30s of model load followed by a refusal.
+
+**Two matching subtleties, both found by testing rather than reasoning:**
+
+1. **Whole-word matching is required.** Substring matching flags "skin" inside *skincare*, "hand" inside *brand* and *handcrafted*, "man" inside *manual*, "leg" inside *legible*, "arm" inside *armature*, "body" inside *bodywash* — vetoing most legitimate product descriptions. Seven such traps are pinned in tests.
+2. **Negated mentions must be ignored, and this was nearly a self-inflicted wound.** Real v2 output already contained *"no hands or skin visible"* on an otherwise ideal product flat-lay — a direction the guard would have skipped. Worse, layer 1 makes such phrasing *more* likely, since a prompt saying "no people" invites the model to echo it: one of the three v3 test directions came back with *"no hands or additional props visible."* Without negation handling, layer 1 would have systematically triggered layer 2 and blocked the very outputs it was designed to produce. Spans from a negation cue (`no`, `without`, `free of`, `excluding`, `absent`, `minus`, and `<x>-free`) to the next clause boundary are stripped before matching. `"a hand applying cream, no text"` still correctly trips on *hand*.
+
+**Verified against the two concepts that actually failed in #37:**
+
+| Concept | Layer 2 verdict |
+|---|---|
+| Barrier Science Explainer | skipped, matched `'fingertip'` |
+| Cold-Weather Routine Listicle | skipped, matched `'person'` |
+| Winter Stock-Up Offer (the one that worked) | allowed |
+
+**And layer 1 held on its own:** a fresh live run of the same brief under v3 produced **3 of 3** product-only directions — none needed the safety net. One generated image was rendered end to end and is clean: a frosted jar with mounded cream, no anatomy artifacts. So layer 2 did not fire on new output; it is there for the older and fallback paths.
+
+**Streamlit Cloud feature flag (same pass).** `is_streamlit_cloud()` checks `STREAMLIT_SHARING_MODE`, a `streamlit*` hostname, and a `/mount/src` entry in `sys.path`; `is_available()` consults it first, so the reason names the deployment rather than a confusing MPS error. The toggle is now **hidden entirely** where generation cannot work, rather than shown and failing on click. Saved images still replay there, so demo mode is unaffected.
+
+Deliberately **not** keyed on `STREAMLIT_SERVER_HEADLESS` — that is set by any `streamlit run --server.headless true`, including local development, and would have disabled the feature exactly where it works. Verified both directions by running the real app twice: with `STREAMLIT_SHARING_MODE=1` the page renders **zero checkboxes** and the explanation; locally it renders **one checkbox** and no cloud message.

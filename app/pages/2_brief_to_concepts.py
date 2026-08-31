@@ -66,17 +66,23 @@ with st.sidebar:
     # Entry #33. Off by default: local generation costs no money, but ~6s and
     # most of this machine's unified memory per image is a real cost the user
     # should choose to pay. Already-generated images always display regardless.
-    st.subheader("Images")
-    generate_images = st.checkbox("Generate concept images", value=False)
-    if generate_images:
-        _images_ok, _images_reason = image_generation_status()
-        if _images_ok:
+    #
+    # Entry #38: the control is hidden entirely where generation cannot work
+    # (the deployed app), rather than shown and then erroring on click. Saved
+    # images still replay there, so demo mode is unaffected.
+    _images_ok, _images_reason = image_generation_status()
+    generate_images = False
+    if _images_ok:
+        st.subheader("Images")
+        generate_images = st.checkbox("Generate concept images", value=False)
+        if generate_images:
             st.caption(
                 "Runs locally on this machine — no API key, no per-image cost. "
                 "Roughly 6s per image, generated one at a time."
             )
-        else:
-            st.warning(_images_reason)
+    else:
+        st.subheader("Images")
+        st.caption(_images_reason)
 
 # --- demo mode: replay ----------------------------------------------------
 

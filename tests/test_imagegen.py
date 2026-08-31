@@ -297,3 +297,160 @@ def test_the_no_text_negative_always_survives_truncation():
 def test_truncation_breaks_on_a_word_boundary():
     prompt = build_prompt("supercalifragilistic " * 60)
     assert "supercalifragilisti," not in prompt  # no mid-word cut
+
+
+# --- human-anatomy guard (Entry #38) --------------------------------------
+# Layer two of the product-only fix. Layer one is the concept_v3 prompt; this
+# catches directions written under older prompts, the ad-copy fallback, and
+# cases where the model ignores the instruction.
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("a fingertip pressing into bare skin on a forearm", "fingertip"),
+        ("Lifestyle photo of a person applying moisturizer", "person"),
+        ("close-up of a hand holding a jar", "hand"),
+        ("a model wearing a knit sweater", "model"),
+        ("hands cupping a jar, no logos", "hands"),
+    ],
+)
+def test_guard_catches_human_subjects(text, expected):
+    """These are the compositions Entry #37 measured as reliably malformed."""
+    assert imagegen.find_human_subject(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "A single jar of moisturizer on a pale blue-grey background",
+        "Flat-lay of three skincare bottles on white marble",
+        "Clean product-on-white studio shot of a tube, silver palette",
+    ],
+)
+def test_guard_allows_product_only_directions(text):
+    assert imagegen.find_human_subject(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Substring traps: whole-word matching, not `in`.
+        "skincare product on marble",   # skin
+        "a brand new jar",              # brand/hand
+        "handcrafted ceramic dish",     # hand
+        "a manual pump bottle",         # man
+        "legible embossing",            # leg
+        "bodywash bottle",              # body
+        "armature stand",               # arm
+    ],
+)
+def test_guard_does_not_trip_on_substrings(text):
+    assert imagegen.find_human_subject(text) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Real concept_v3 output phrasing — asking for no people makes these
+        # negations MORE likely, so falsely skipping them would defeat layer one.
+        "Flat-lay of three bottles on marble, no hands or skin visible",
+        "a jar centered in frame, no people, soft lighting",
+        "product shot without a model",
+        "human-free studio scene",
+    ],
+)
+def test_guard_ignores_negated_mentions(text):
+    assert imagegen.find_human_subject(text) is None
+
+
+def test_negation_does_not_mask_a_real_human_subject():
+    """"no text" must not launder "a hand applying" in the same sentence."""
+    assert imagegen.find_human_subject("a hand applying cream, no text") == "hand"
+
+
+def test_guard_handles_empty_input():
+    assert imagegen.find_human_subject("") is None
+    assert imagegen.find_human_subject(None) is None
+
+
+def test_skipped_is_distinct_from_the_other_two_outcomes():
+    """Skipped is correct behaviour, not an error — the UI styles it differently."""
+    from creativesignal.imagegen import ImageGenerationSkipped
+
+    assert not issubclass(ImageGenerationSkipped, ImageGenerationFailed)
+    assert not issubclass(ImageGenerationSkipped, ImageGenerationUnavailable)
+
+
+def test_generate_image_skips_before_loading_the_model(monkeypatch):
+    """A skip must cost nothing — no 30s pipeline load just to refuse."""
+    from creativesignal.imagegen import ImageGenerationSkipped
+
+    def _must_not_load():
+        raise AssertionError("pipeline must not load for a skipped request")
+
+    monkeypatch.setattr(imagegen, "_pipeline", _must_not_load)
+    with pytest.raises(ImageGenerationSkipped, match="human-subject"):
+        imagegen.generate_image(
+            "a person applying cream to their face", run_id="r", concept_title="c"
+        )
+
+
+def test_skip_message_names_the_matched_term():
+    """A bare "skipped" with no reason is the silent behaviour this project
+    treats as a defect."""
+    from creativesignal.imagegen import ImageGenerationSkipped
+
+    with pytest.raises(ImageGenerationSkipped, match="'fingertip'"):
+        imagegen.generate_image("a fingertip on skin", run_id="r", concept_title="c")
+
+
+def test_guard_also_covers_the_fallback_text(monkeypatch):
+    """Old runs have no visual_direction and fall back to ad copy, which can
+    equally describe a person."""
+    from creativesignal.imagegen import ImageGenerationSkipped
+
+    monkeypatch.setattr(
+        imagegen, "_pipeline", lambda: (_ for _ in ()).throw(AssertionError("no load"))
+    )
+    with pytest.raises(ImageGenerationSkipped):
+        imagegen.generate_image(
+            "", fallback_text="a woman applying serum", run_id="r", concept_title="c"
+        )
+
+
+# --- Streamlit Cloud feature flag (Entry #38) -----------------------------
+
+
+def test_not_detected_as_cloud_locally():
+    """A false positive here would disable the feature where it works."""
+    assert imagegen.is_streamlit_cloud() is False
+
+
+def test_local_headless_is_not_mistaken_for_cloud(monkeypatch):
+    """`streamlit run --server.headless true` is normal local development."""
+    monkeypatch.setenv("STREAMLIT_SERVER_HEADLESS", "true")
+    assert imagegen.is_streamlit_cloud() is False
+
+
+@pytest.mark.parametrize(
+    "var,value", [("STREAMLIT_SHARING_MODE", "1"), ("HOSTNAME", "streamlit-abc123")]
+)
+def test_cloud_env_signals_are_detected(monkeypatch, var, value):
+    monkeypatch.setenv(var, value)
+    assert imagegen.is_streamlit_cloud() is True
+
+
+def test_cloud_mount_path_is_detected(monkeypatch):
+    import sys
+
+    monkeypatch.setattr(sys, "path", ["/mount/src/creative-signal", *sys.path])
+    assert imagegen.is_streamlit_cloud() is True
+
+
+def test_is_available_reports_cloud_before_hardware(monkeypatch):
+    """On Cloud the reason must name the deployment, not a confusing MPS error."""
+    monkeypatch.setenv("STREAMLIT_SHARING_MODE", "1")
+    ok, reason = is_available()
+    assert ok is False
+    assert "deployed app" in reason
