@@ -42,6 +42,16 @@ dependencies = [
     "langchain-community==0.3.0",
     "langchain-anthropic==0.3.0",
     "nltk==3.9.1",
+    # Local image generation (Entry #33). diffusers' current release (0.40.0)
+    # requires huggingface-hub>=1.23, which breaks transformers and
+    # sentence-transformers (both need <1.0) — `import transformers` fails
+    # outright. 0.31.0 is the newest diffusers that coexists with the pinned
+    # embedding stack; verified that transformers, sentence-transformers, and
+    # diffusers all import together and that real semantic retrieval still
+    # works under the resulting huggingface-hub downgrade.
+    "diffusers==0.31.0",
+    "huggingface-hub==0.36.2",
+    "accelerate==1.14.0",
 ]
 
 [project.optional-dependencies]

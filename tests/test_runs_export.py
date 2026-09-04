@@ -102,7 +102,10 @@ def test_list_runs_is_newest_first(tmp_path, run):
 def test_run_records_model_and_prompt_versions(run):
     """L3 prompt A/B needs to know which prompt produced which output."""
     assert run.model_versions["synthesis"]
-    assert run.prompt_versions["concepts"] == "concept_v1"
+    # v3 constrains visual_direction to product-only framing (Entry #38);
+    # v2 added the field (Entry #34); v1 produced the six oldest runs. The
+    # stamp is per-run precisely so those stay correctly attributed.
+    assert run.prompt_versions["concepts"] == "concept_v3"
 
 
 def test_saving_twice_replaces_rather_than_duplicates(tmp_path, run):
@@ -154,3 +157,58 @@ def test_export_filename_is_stable_and_identifies_the_run(run):
     name = export_filename(run)
     assert name.endswith(".md")
     assert run.run_id in name
+
+
+# --- image persistence (Entry #33) ----------------------------------------
+
+
+def test_image_path_round_trips_through_sqlite(tmp_path, run):
+    """`image_path` rides along in the concept JSON — no schema migration."""
+    from creativesignal.runs import attach_image
+
+    db = tmp_path / "corpus.sqlite"
+    save_run(run, db)
+    ok = attach_image(
+        run.run_id, "Ceramide night repair", "data/generated_images/x/y.png", db
+    )
+    assert ok is True
+
+    reloaded = load_run(run.run_id, db)
+    assert reloaded.concepts[0].image_path == "data/generated_images/x/y.png"
+
+
+def test_attach_image_leaves_concept_text_untouched(tmp_path, run):
+    """Attaching an image must never alter content the reviewer already passed."""
+    from creativesignal.runs import attach_image
+
+    db = tmp_path / "corpus.sqlite"
+    save_run(run, db)
+    before = run.concepts[0]
+    attach_image(run.run_id, before.title, "img.png", db)
+    after = load_run(run.run_id, db).concepts[0]
+
+    assert after.headline == before.headline
+    assert after.body_copy == before.body_copy
+    assert after.rationale == before.rationale
+    assert after.cited_creative_ids == before.cited_creative_ids
+
+
+def test_attach_image_reports_an_unknown_run(tmp_path):
+    from creativesignal.runs import attach_image
+
+    assert attach_image("run_nope", "T", "img.png", tmp_path / "corpus.sqlite") is False
+
+
+def test_attach_image_reports_an_unknown_concept(tmp_path, run):
+    from creativesignal.runs import attach_image
+
+    db = tmp_path / "corpus.sqlite"
+    save_run(run, db)
+    assert attach_image(run.run_id, "No Such Concept", "img.png", db) is False
+
+
+def test_concepts_without_images_default_to_none(tmp_path, run):
+    """The six runs persisted before Entry #33 have no image_path at all."""
+    db = tmp_path / "corpus.sqlite"
+    save_run(run, db)
+    assert load_run(run.run_id, db).concepts[0].image_path is None

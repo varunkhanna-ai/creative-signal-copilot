@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
+
+# Generated ad-concept images (Entry #33) — regenerable, and large
+data/generated_images/

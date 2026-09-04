@@ -361,3 +361,88 @@ def live_mode_allowed() -> bool:
         st.session_state["live_unlocked"] = True
         return True
     return False
+
+
+def concept_image(concept, run_id: str = "", enabled: bool = False) -> None:
+    """Render a concept's generated image, or generate it on explicit opt-in.
+
+    Entry #33. Three states, none of which is a silent blank:
+      - an image already exists  -> show it (demo mode replays with no compute)
+      - generation is off        -> say nothing at all (the default; not an error)
+      - generation is on         -> generate, persist, and show; on failure show
+                                    why against this concept and leave the rest
+                                    of the page intact.
+    """
+    from pathlib import Path
+
+    from creativesignal.imagegen import (
+        ImageGenerationFailed,
+        ImageGenerationSkipped,
+        ImageGenerationUnavailable,
+        generate_image,
+    )
+    from creativesignal.runs import attach_image
+
+    # The anatomy caveat is measured, not hedging: 4 of 4 sampled compositions
+    # involving people or hands came back malformed, at both 1 and 4 inference
+    # steps (Entry #37). Stated on every image because the failure is obvious
+    # once noticed and misleading if not.
+    caption = (
+        "Generated locally from the concept's visual direction. A mood "
+        "reference for a designer, not a finished asset — and not evidence "
+        "of anything about the retrieved ads. Compositions involving people "
+        "or hands are usually malformed at this quality setting; "
+        "product-only framing is far more reliable."
+    )
+
+    # Already generated: replay costs nothing.
+    if concept.image_path and Path(concept.image_path).exists():
+        st.image(concept.image_path, use_container_width=True)
+        st.caption(caption)
+        return
+
+    if not enabled:
+        return
+
+    with st.spinner(f"Generating image for {concept.title}..."):
+        try:
+            image = generate_image(
+                concept.visual_direction,
+                run_id=run_id,
+                concept_title=concept.title,
+                # Pre-Entry-#33 runs have no visual_direction; fall back to the
+                # concept's own copy so saved runs stay generatable.
+                fallback_text=f"{concept.headline}. {concept.body_copy}",
+            )
+        except ImageGenerationUnavailable as exc:
+            st.warning(
+                f"Image generation is unavailable on this machine: {exc} "
+                "Everything else on this page is unaffected."
+            )
+            return
+        except ImageGenerationSkipped as exc:
+            # Not an error: the guard working as designed (Entry #38). Shown
+            # as info, not a warning, so correct behaviour does not read as
+            # a fault.
+            st.info(str(exc))
+            return
+        except ImageGenerationFailed as exc:
+            st.warning(f"Could not generate an image for this concept: {exc}")
+            return
+
+    if run_id:
+        attach_image(run_id, concept.title, image.relative_path)
+
+    st.image(str(image.path), use_container_width=True)
+    st.caption(f"{caption} Generated in {image.latency_s:.1f}s.")
+
+
+def image_generation_status() -> tuple[bool, str]:
+    """Whether local image generation can run here, and why not if it can't.
+
+    Thin pass-through so pages never import `imagegen` directly — same
+    single-point-of-access rule the rest of the app follows.
+    """
+    from creativesignal.imagegen import is_available
+
+    return is_available()

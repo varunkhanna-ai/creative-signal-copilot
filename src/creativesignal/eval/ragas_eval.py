@@ -93,7 +93,7 @@ def _claude_judge():
 
     from creativesignal.llm import SONNET_MODEL, MissingAPIKeyError
 
-    load_dotenv()  # llm.py's own client loads it lazily the same way
+    load_dotenv(override=True)  # `.env` must win over a stray shell var — see llm.py Entry #31
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
         raise MissingAPIKeyError(
@@ -134,8 +134,19 @@ def _claude_judge():
             result.generations = [[g[0] for g in result.generations]]
             return result
 
+    # base_url pinned for the same reason as llm.py's client (Entry #39):
+    # ChatAnthropic also reads ANTHROPIC_BASE_URL from the environment, so a
+    # shell profile pointing at a proxy would silently redirect the judge LLM
+    # too. Reuses llm._base_url() so there is one source of truth.
+    from creativesignal.llm import _base_url
+
     return _NoTemperatureWrapper(
-        ChatAnthropic(model=SONNET_MODEL, api_key=key, temperature=None)
+        ChatAnthropic(
+            model=SONNET_MODEL,
+            api_key=key,
+            temperature=None,
+            base_url=_base_url(),
+        )
     )
 
 

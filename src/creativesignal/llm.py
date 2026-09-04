@@ -60,6 +60,14 @@ class LLMResponse:
     output_tokens: int
     cost_usd: float
     latency_s: float
+    # "max_tokens" when the model was cut off mid-response. Surfaced because a
+    # truncated JSON payload parses to nothing and is otherwise indistinguishable
+    # from "the model returned nothing useful" (Entry #39).
+    stop_reason: str = ""
+
+    @property
+    def was_truncated(self) -> bool:
+        return self.stop_reason == "max_tokens"
 
     @property
     def total_tokens(self) -> int:
@@ -112,12 +120,36 @@ def log_cost(
         )
 
 
+DEFAULT_BASE_URL = "https://api.anthropic.com"
+
+
+def _base_url() -> str:
+    """The API endpoint, ignoring whatever the shell exports.
+
+    Read from `.env` only — via `dotenv_values`, which parses the file without
+    consulting `os.environ` — so an ANTHROPIC_BASE_URL exported by a shell
+    profile cannot silently redirect this project's calls, while setting it in
+    `.env` still works for anyone who genuinely wants a proxy. See Entry #39.
+    """
+    from dotenv import dotenv_values, find_dotenv
+
+    configured = dotenv_values(find_dotenv()) or {}
+    return (configured.get("ANTHROPIC_BASE_URL") or "").strip() or DEFAULT_BASE_URL
+
+
 @lru_cache(maxsize=1)
 def _client():
     """Build the one Anthropic client, lazily so no-key paths stay importable."""
     from dotenv import load_dotenv
 
-    load_dotenv()
+    # override=True: `.env` must win over a pre-existing environment variable,
+    # not defer to it. python-dotenv's default (override=False) means a shell
+    # profile that exports ANTHROPIC_API_KEY="" (blank, as a placeholder or a
+    # leftover unset) permanently shadows a real key in `.env` — load_dotenv()
+    # sees the variable is already "set" and silently skips it. This looks
+    # identical to ".env not found" from the app's side, but `.env` is present
+    # and correct the whole time. See decision-log Entry #31.
+    load_dotenv(override=True)
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
         raise MissingAPIKeyError(
@@ -127,14 +159,27 @@ def _client():
         )
     from anthropic import Anthropic
 
-    return Anthropic(api_key=key)
+    # Pin the endpoint. The SDK reads ANTHROPIC_BASE_URL from the environment,
+    # and a shell profile that points it at a proxy silently redirects every
+    # call in this project. On the reference machine `~/.zshrc` sets it to
+    # OpenRouter, which authenticates with `Authorization: Bearer` and so
+    # rejects the `x-api-key` header the SDK correctly sends for an Anthropic
+    # key — surfacing as `AuthenticationError: Missing Authentication header`,
+    # a message that points at the key when the key was never the problem.
+    #
+    # `base_url` is passed explicitly for the same reason `.env` is loaded with
+    # override=True (Entry #31): project configuration must beat ambient shell
+    # state. ANTHROPIC_BASE_URL is still honoured when set in `.env`, which is
+    # the supported way to point this project at a proxy deliberately.
+    # See Entry #39.
+    return Anthropic(api_key=key, base_url=_base_url())
 
 
 def has_api_key() -> bool:
     """True if an LLM call could succeed. Lets callers degrade rather than crash."""
     from dotenv import load_dotenv
 
-    load_dotenv()
+    load_dotenv(override=True)  # see _client() for why override=True is required
     return bool(os.getenv("ANTHROPIC_API_KEY"))
 
 
@@ -201,6 +246,7 @@ def complete(
         output_tokens=raw.usage.output_tokens,
         cost_usd=estimate_cost(model, raw.usage.input_tokens, raw.usage.output_tokens),
         latency_s=latency,
+        stop_reason=getattr(raw, "stop_reason", "") or "",
     )
     log_cost(task, response, prompt_version)
     return response

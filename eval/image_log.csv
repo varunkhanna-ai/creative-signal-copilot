@@ -1,0 +1,8 @@
+timestamp,run_id,concept_title,model,prompt_version,width,height,steps,latency_s,path
+2026-08-30T05:52:10+00:00,run_075a351d1056,Winter Balm Bundle,stabilityai/sd-turbo,image_prompt_v1,1080,1080,1,6.09,data/generated_images/run_075a351d1056/winter-balm-bundle.png
+2026-08-30T05:52:20+00:00,run_075a351d1056,Instant Hydration Claim,stabilityai/sd-turbo,image_prompt_v1,1080,1080,1,10.34,data/generated_images/run_075a351d1056/instant-hydration-claim.png
+2026-08-30T05:52:46+00:00,run_075a351d1056,Winter Skin Survival Kit,stabilityai/sd-turbo,image_prompt_v1,1080,1080,1,26.031,data/generated_images/run_075a351d1056/winter-skin-survival-kit.png
+2026-08-30T06:30:26+00:00,run_3647f7fdcfdb,Barrier Science Explainer,stabilityai/sd-turbo,image_prompt_v1,1080,1080,1,7.172,data/generated_images/run_3647f7fdcfdb/barrier-science-explainer.png
+2026-08-30T06:30:33+00:00,run_3647f7fdcfdb,Winter Stock-Up Offer,stabilityai/sd-turbo,image_prompt_v1,1080,1080,1,6.818,data/generated_images/run_3647f7fdcfdb/winter-stock-up-offer.png
+2026-08-30T06:30:48+00:00,run_3647f7fdcfdb,Cold-Weather Routine Listicle,stabilityai/sd-turbo,image_prompt_v1,1080,1080,1,15.089,data/generated_images/run_3647f7fdcfdb/cold-weather-routine-listicle.png
+2026-08-30T06:42:00+00:00,run_3647f7fdcfdb,Winter Stock-Up Offer,stabilityai/sd-turbo,image_prompt_v2,1080,1080,1,5.915,data/generated_images/run_3647f7fdcfdb/winter-stock-up-offer.png

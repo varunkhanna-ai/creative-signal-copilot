@@ -73,7 +73,9 @@ W2.6 (Human, 20 queries × 3–5 hand-labeled relevant creative IDs) has not bee
 **Status:** Standing practice for all remaining tasks.
 
 
-## Entry #5 — Local environment setup + Phoenix pytest plugin bug
+## Entry #35 — Local environment setup + Phoenix pytest plugin bug
+
+*Renumbered from #5 to resolve a collision: two different entries — this one and the F1 proxy-bucket decision immediately below — were both written as #5 on branches that later merged. This one moved because the other is referenced by the literal string `"Entry #5"` in `insight/tree.py`, `test_tree.py`, and `load_tier3.py`. Left in place rather than sorted to the end, since its content is the W1.3 environment setup and belongs here chronologically.*
 
 **Setup (one-time, done W1.3):** Python 3.12 not present by default on macOS — installed via `brew install python@3.12` (landed at `/opt/homebrew/bin/python3.12`). Created venv with `python3.12 -m venv .venv`, activated with `source .venv/bin/activate`, then `pip install -e .` to pull all 14 pinned dependencies.
 
@@ -508,3 +510,215 @@ Verified after the fix: facebook 95, instagram 95, messenger 38, threads 38, tik
 - **Ragas `answer_relevancy`**: 0.573–0.627 across two independent runs, n=15.
 - **Ragas `faithfulness`**: not usable pending a parser fix or a ragas version upgrade — reported as broken, not papered over with a partial-sample number presented as complete.
 
+## Entry #31 — `.env` silently ignored: `~/.zshrc` exports a blank `ANTHROPIC_API_KEY` (debugging)
+
+**Symptom.** `.env` was confirmed present, correctly formatted, and found successfully by `load_dotenv()` in isolation — yet the Streamlit app reported "No ANTHROPIC_API_KEY configured" every time, after every restart.
+
+**Root cause, found by instrumenting the real call path rather than re-testing the parts already confirmed working.** `~/.zshrc:11` contains `export ANTHROPIC_API_KEY=""`. Any terminal that sources that profile — including the one `streamlit run` is launched from — starts with `ANTHROPIC_API_KEY` already present in its process environment, set to an empty string. `python-dotenv`'s `load_dotenv()` defaults to `override=False`: if the variable already exists in `os.environ` at all, it leaves it alone, even if the existing value is empty and the `.env` file has a correct one sitting right next to it. `has_api_key()`/`_client()` then read `os.getenv("ANTHROPIC_API_KEY")` and get back `""`, which is falsy — indistinguishable, from the app's side, from ".env was never found."
+
+**Why isolated testing missed it.** Calling `has_api_key()` from a plain `python -c "..."` one-liner in an *already-open* Bash tool session — one that had not freshly sourced `~/.zshrc` — never had the blank variable in its environment to begin with, so it worked every time in exactly the way that made the bug look like it couldn't be real. The failure only reproduces in a shell that has actually sourced the profile, which is what a normal terminal launching `streamlit run` does and what my initial ad-hoc checks did not.
+
+**Diagnosis method, in order:**
+1. Confirmed `.env` exists, is well-formed, and `load_dotenv()`/`find_dotenv()` resolve it correctly from plain Python — ruled out the file itself.
+2. Traced `find_dotenv()`'s actual search algorithm from source rather than assuming cwd-based behavior: it walks upward from the *calling frame's file location* (here, `llm.py`'s own directory), which resolves correctly regardless of Streamlit's working directory or execution model — ruled out a path-resolution bug.
+3. Instrumented `has_api_key()` itself to write its actual runtime state (pre-existing env value, `find_dotenv()` result, post-load value) to a file, then drove the **real running app** through the browser rather than a synthetic reproduction — surfaced `env_already_set` before ever changing the check to look at the *pre*-existing value.
+4. Corrected the instrumentation to capture the environment variable's value *before* `load_dotenv()` ran (not after), which is what actually named the mechanism: `load_dotenv(override=False)` skipping a variable that already exists.
+5. Grepped shell profiles directly rather than guessing further — `~/.zshrc:11` was the source in one line.
+
+**Fix.** `load_dotenv(override=True)` at both call sites (`_client()` and `has_api_key()` in `llm.py`, and the corresponding call in `ragas_eval.py`'s judge-LLM setup). `.env` now always wins over whatever the shell happened to export, which is the correct policy for a project-local secret file regardless of what a user's personal shell profile does.
+
+**Verified, not assumed:** reproduced the exact failure with `ANTHROPIC_API_KEY=""` forced into the environment before the fix (confirmed `has_api_key()` returned `False`), confirmed the fix resolves it in isolation, then re-confirmed under a real `zsh -c "source ~/.zshrc && ..."` invocation — the literal condition the bug report described — both before (fails) and after (passes) the fix.
+
+**Test added:** `tests/test_llm.py`, including one test that pins the actual fix (`load_dotenv` must be called with `override=True`) so a future refactor that quietly drops the kwarg fails loudly rather than silently regressing.
+
+**Not the user's `.zshrc` to fix.** The blank export may be intentional elsewhere (e.g., to make an unset key explicit rather than absent) — the fix belongs in this project's code, which cannot assume every developer's shell environment is clean, not in a personal dotfile outside the repo's control.
+
+## Entry #32 — Eval dashboard never wired to read real generation results (W5.10, debugging)
+
+**What was reported.** The eval dashboard still showed "not yet measured" for citation correctness and Ragas after both had been run for real (Entry #29/#30: citation correctness 1.000 n=15, Ragas answer relevancy 0.57–0.63 n=15).
+
+**Not a staleness bug — a missing-wiring bug.** The page was written at W5.10, before any generation run existed, and was never revisited after those runs landed. Concretely: it never imported `citation_correctness` or `list_runs`, never read `eval/results/ragas_eval.json` (only `retrieval_eval_*.json`, a different file for a different metric), and its "Not yet measured" section was static markdown text listing all four generation metrics as permanently unmeasured — not a check against any data source at all. The annotator section and cost section *were* wired to live queries and were already showing real numbers (98 annotations, $0.535) the whole time; only the generation-metrics section had no wiring.
+
+**Fix.** Added a Generation section computing citation correctness live from the `runs` table (same `citation_correctness()` function the eval harness uses, so the dashboard and the CLI report cannot silently disagree) and loading `ragas_eval.json` directly, including its `n_scored` breakdown so faithfulness's near-total parse-failure rate (Entry #30) is visible as "unusable, 0 of 15 scored" rather than a blank or a misleadingly bare number. Rewrote the "Not yet measured" block to state only what is genuinely unmeasured — the golden set and the human rubric — instead of four items, two of which had real results sitting on disk unread.
+
+**Also fixed in passing:** the retrieval empty-state message still said "the corpus is 9 synthetic ads," a factual claim that stopped being true once Tier-3 landed (B1). Corrected to name the real blocker (the golden set) rather than a corpus-size limitation that no longer exists.
+
+**Verified against the actual artifacts, not assumed:** computed citation correctness and read `ragas_eval.json` directly in a script first, then loaded the real running page and read its rendered text, and confirmed the two matched exactly (1.000/15, 0.573, unusable/0 of 15, $0.5350) before considering this done.
+\
+
+## Entry #33 — Local image generation: reversing Entry #2's "no image generation" call
+
+**Numbering note:** deliberately #33, not #31. This branch (`cc-image-generation`) is cut from `main`, whose decision log ends at #30, but `cc-base` already holds unmerged entries #31 and #32. Skipping those numbers reserves them so both branches merge without a collision in this file.
+
+**This reverses Entry #2.** That entry ruled out actual image generation and scoped the stretch item to a text-only `visual_direction` field. Its reasoning was explicit and, at the time, correct: image generation "would require a second vendor API key, directly violating the DECIDED 'no extra vendor API keys' rule."
+
+**What changed: the blocker was the API key, not the images.** Entry #2's objection was never aesthetic or scope-based — it was a governance constraint plus a cost/failure-surface argument. Local generation via `diffusers` on Apple Silicon's MPS backend removes the load-bearing half of that objection entirely:
+
+| Entry #2's objection | Status under local generation |
+|---|---|
+| Requires a second vendor API key | **Gone.** `ANTHROPIC_API_KEY` remains the only secret. Weights download from Hugging Face with no account or token. |
+| Adds a cost failure surface | **Gone.** No per-call cost. Compute is local. |
+| Adds a content-moderation surface | Partially remains — see the honest caveat below. |
+| Cuts against "explainability beats sophistication" | Unchanged, and still the real constraint — hence opt-in, off by default. |
+
+This is the same reasoning shape as the project's other reversals (#23, #26): a decision made on a defensible prior, revisited when the facts it rested on actually changed. The original call was not wrong; its premise expired.
+
+**Feasibility measured before committing to the approach, not assumed.** Apple M5, 24GB unified memory, `stabilityai/sd-turbo` at fp32 (MPS does not reliably support fp16 for this pipeline):
+
+| Measurement | Result |
+|---|---|
+| Model weights on disk (one-time) | 4.8 GB |
+| Pipeline load into memory | ~30 s |
+| First generation (512×512, MPS warmup) | 3.3 s |
+| Steady-state generation (512×512, 1 step) | 0.9 s |
+| **Generation at target 1080×1080, 1 step** | **5.7 s** |
+| MPS memory during 1080×1080 generation | 5.2 GB active / 16.5 GB driver-reserved |
+| Output verified | exact 1080×1080 PNG, ~1.4 MB |
+
+**Verdict: viable.** ~6 s per image for an explicitly opt-in action is acceptable. The Hugging Face Inference API fallback — which *would* have needed a free API key and reintroduced Entry #2's exact objection — is not needed.
+
+**The real constraint, named rather than buried:** the Metal driver reserves ~16.5 GB during a 1080×1080 generation. On a 24 GB machine that is most of unified memory. The wrapper is therefore sized for **one image per call, sequentially**, with no assumption of headroom for parallel generation — and this is a hard reason not to generate images for all three concepts automatically.
+
+**Quality, stated honestly:** at 1 inference step, output is stylistically plausible (clean product-photography framing, on-topic composition) but not literal or photorealistic. It is a *mood/direction* artifact for a human designer, not a packshot. That matches the `visual_direction` field's original intent from Entry #2 — a brief you hand to a designer — and the UI must not imply otherwise.
+
+**Content-moderation caveat that does NOT go away with local generation.** `sd-turbo` loads with its safety checker disabled by default in `diffusers`, and generation is unsupervised. Since output is derived from LLM-written `visual_direction` text describing skincare ads, prompt content is low-risk — but "local" removes the vendor's moderation layer rather than the need for one. This is a genuine residual risk from Entry #2's list, and it is the one item that did not clear.
+
+**Dependency conflict found and resolved (same pattern as #6, #19, #30).** `diffusers` 0.40.0 requires `huggingface-hub>=1.23`; `transformers` and `sentence-transformers` both require `<1.0`. Installing current `diffusers` broke `import transformers` outright — which would have taken down the entire embedding/retrieval stack, not just image generation. Pinned `diffusers==0.31.0` + `huggingface-hub==0.36.2`, then verified beyond import: the full test suite (222 passing) and a real hybrid retrieval query returning correct semantically-matched results under the downgraded hub.
+
+**Status:** feasibility confirmed and dependencies pinned. The wrapper module, opt-in UI toggle, and `runs`-table persistence are the remaining build.
+
+## Entry #34 — `visual_direction` is populated by a new prompt version, not an edit to `concept_v1`
+
+Entry #33 added `Concept.visual_direction` as the input to image generation, but nothing produced it — every generation fell back to the concept's ad copy, which describes what the ad *says* rather than what a picture should *show*. Two ways to close that:
+
+**Rejected: edit `concept_v1.txt` in place.** Prompts are versioned artifacts (AGENTS.md), and the six already-persisted runs each record `prompt_versions = {"concepts": "concept_v1"}`. Mutating v1 would leave those runs claiming they were produced by a prompt that no longer exists in that form — silently misattributing their provenance, and breaking the L3 prompt-A/B story that depends on a version stamp meaning something fixed.
+
+**Chosen: `concept_v2.txt`,** identical to v1 plus a `visual_direction` field, with `CONCEPT_PROMPT` as the single constant both the generator and the run-stamp read. Old runs keep pointing at v1 and remain exactly as attributed; new runs stamp v2.
+
+**The field asks for what a camera would see** — subject, composition, lighting, mood, palette — and explicitly forbids slogans, in-image text, and claims. Two reasons: diffusion models render text as gibberish (visible in the first real generations), and an image carrying a claim would route around the Reviewer entirely, which only inspects concept *text*. Keeping claims out of the image brief keeps the reviewer's surface complete.
+
+**Not yet verified against the live API.** The end-to-end check — that Claude actually returns a usable `visual_direction` under v2 — could not run: the Anthropic account's credit balance is exhausted (`400 invalid_request_error: Your credit balance is too low`). What *is* verified: v2 renders and requests the field, v1 is unchanged, the schema round-trips it, and the fallback path works (all three images on the replayed lip-balm run were generated through it). The prompt-to-model round trip is the one link untested, and it is untested for a billing reason, not a code reason.
+
+## Entry #36 — CLIP truncation silently dropped the "no text" negative (image_prompt_v2)
+
+**Found by running the feature for real, not by testing it.** The first live end-to-end generation printed a warning I would not have seen from unit tests:
+
+```
+Token indices sequence length is longer than the specified maximum (88 > 77)
+The following part of your input was truncated because CLIP can only handle
+sequences up to 77 tokens: ['detail, no text, no watermark, no lettering']
+```
+
+**Cause.** `MAX_PROMPT_CHARS = 300` budgeted the `visual_direction` *only*, ignoring the 134-character style suffix appended after it. Real directions from `concept_v2` run ~235-260 characters, so every rendered prompt landed at ~92-98 tokens against CLIP's 77-token cap. CLIP discards the tail — and the tail was `no text, no watermark, no lettering`, the single instruction most needed, dropped on **every generation since the feature was built**. The gibberish lettering visible on the first batch of images is the direct consequence.
+
+**Fix — `image_prompt_v2`, plus budgeting the whole rendered prompt:**
+- The budget now covers the full prompt, computed as `MAX_PROMPT_CHARS - len(suffix)`, so the suffix can never be the part that gets cut.
+- The suffix is shortened to `advertising product photography, no text, no lettering`. The dropped terms (`skincare, clean composition, soft studio lighting, high detail`) were largely redundant — `concept_v2`'s directions already specify subject, lighting, and mood, so the suffix was spending scarce tokens restating them.
+- Truncation happens on a word boundary rather than mid-word.
+
+Measured after: the same three directions render at 253-257 characters (~64 tokens), comfortably under the cap, and a regeneration produced **no truncation warning**.
+
+**Why this is a versioned prompt change, not an edit.** Same rule as Entry #34: `eval/image_log.csv` records `prompt_version` per generated image, so the four images already produced under v1 must keep pointing at v1.
+
+**Lesson, and it is the recurring one.** Unit tests passed throughout — they asserted the prompt was *shorter than a limit I had chosen*, not that it fit *the limit the model actually enforces*. The bug lived in the gap between those two, and only surfaced when a real model rejected the real input. Same shape as Entries #6, #19, #23, #28 and #30: the tests encoded my assumption, so they could never contradict it.
+
+**Honest caveat on the outcome:** the regenerated image still shows faint gibberish text on the jars. `no text` is a weak negative in a 1-step distilled model with `guidance_scale=0.0` — there is no classifier-free guidance for it to act through. The fix restores the instruction; it does not guarantee obedience. Consistent with Entry #33's framing: a mood reference, not a finished asset.
+
+## Entry #37 — Raising inference steps does not fix composition (experiment; `INFERENCE_STEPS` stays 1)
+
+Entry #33 shipped `sd-turbo` at 1 inference step. The first real generations (Entry #36) produced one good product shot and two anatomically broken images — merged faces, extra hands. The obvious hypothesis was that 1 step was simply too few. It was tested rather than assumed.
+
+**Method.** Same `visual_direction` text, same model, same `guidance_scale=0.0`; only `num_inference_steps` varied. One sample of each failed concept at 1 and 4 steps, then — because n=1 is not evidence — three additional 4-step samples of the face composition. Experiment output was written to separate folders so the 1-step baselines survived for comparison, and both the images and their log rows were removed afterwards: a benchmark is not product output.
+
+**Latency, measured from `eval/image_log.csv`:**
+
+| Setting | n | Samples (s) | Mean |
+|---|---|---|---|
+| 1 step | 2 | 5.7, 10.5 | **8.1 s** |
+| 4 steps | 5 | 27.0, 33.1, 10.7, 16.4, 20.7 | **21.6 s** |
+
+**~2.7× slower.** Variance at 4 steps is wide (10.7–33.1 s), likely thermal or memory pressure on a machine where a single 1080×1080 generation already reserves ~16 GB — so treat the mean as approximate, not a benchmark.
+
+**Result: 4 steps did not fix the anatomy. 4 of 4 face samples failed.**
+
+- *What improved:* rendering fidelity, clearly and consistently — sharper skin texture, better micro-detail and lighting.
+- *What did not:* structure. Sample 1, three merged faces. Sample 2, multiple noses and mouths. Sample 3, roughly five merged faces and a forest of hands. Sample 4 came closest to usable — one coherent face — but still carried a second partial face and malformed fingers. One near-miss in four, with no automatic way to detect the failures, is not a usable rate.
+
+**Why more steps was never going to work, in hindsight.** Step count governs *denoising refinement*, not *compositional coherence*. Extra steps render a wrong structure more sharply; they do not make it right. The merged-anatomy failure is a capability limit of a 1–4 step distilled model at `guidance_scale=0.0` — with no classifier-free guidance, "one person" has no mechanism to act as a constraint, the same reason `no text` is a weak negative (Entry #36). The 2.7× latency buys real texture quality and none of the thing that was actually broken.
+
+**Decision: `INFERENCE_STEPS` stays 1.** Paying 2.7× for a fix that does not fix the defect is the wrong trade, and 8 s keeps an opt-in action interactive.
+
+**The failure is content-shaped, not step-shaped.** Product-only compositions work well at 1 step (the frosted-jar image from Entry #36 is genuinely usable); anything with human anatomy fails at *both* settings. That distinction is now stated on every rendered image in the UI, so a viewer is not left to infer it from a bad result.
+
+**Noted as a future option, deliberately not built:** steering `concept_v2`'s `visual_direction` toward product-forward framing ("product on surface, no people") would play to what the model reliably does, cost nothing at runtime, and target the real failure mode. That is a scope decision about what the product *recommends visually*, not a rendering tweak, and is left open rather than taken tonight.
+
+## Entry #38 — Two-layer product-only guard against the anatomy failure (implements the option deferred in #37)
+
+Entry #37 measured the failure — 4 of 4 human-subject compositions malformed, at both 1 and 4 inference steps — and left "steer toward product-only framing" as a noted future option. This implements it as the permanent fix, in two independent layers so neither is a single point of failure.
+
+**Layer 1 — `concept_v3` asks for product-only compositions.** The `visual_direction` field now requests the product, packaging, textures, palette, lighting, and setting, and explicitly forbids people, hands, faces, skin, fingers, body parts, and anyone applying/holding/touching.
+
+*A new prompt file, not an edit to v2* — the same rule as Entry #34. `run_3647f7fdcfdb` is stamped `concepts=concept_v2` and is precisely the run whose directions produced the malformed images; editing v2 in place would make that run claim provenance from a prompt saying "no people," which is the misattribution the versioning discipline exists to prevent. Lineage: v1 original → v2 added the field → v3 constrains it.
+
+**Layer 2 — a keyword guard before generation.** `find_human_subject()` scans the direction for ~60 anatomy terms and raises `ImageGenerationSkipped` on a match. It exists because layer 1 is a *request*, not a guarantee: the model can ignore it, older runs carry v2-era directions, and the ad-copy fallback path (used by every pre-#33 run) is not governed by the prompt at all.
+
+**Chose skip over substitution.** The brief offered either. Substituting a generic "clean product photography, studio lighting" description would render an image that does *not* depict the concept's stated visual direction, shown under a caption claiming it does — a small lie, and exactly the kind this project's spine forbids. Skipping states what happened and why. The message names the matched term, because a bare "skipped" with no reason is the silent behaviour this codebase treats as a defect.
+
+`ImageGenerationSkipped` is a third exception type, distinct from `Unavailable` (stack broken) and `Failed` (this attempt broke). It is rendered with `st.info`, not `st.warning`: correct behaviour should not read as a fault. The guard runs *before* the pipeline loads, so a skip costs nothing rather than 30s of model load followed by a refusal.
+
+**Two matching subtleties, both found by testing rather than reasoning:**
+
+1. **Whole-word matching is required.** Substring matching flags "skin" inside *skincare*, "hand" inside *brand* and *handcrafted*, "man" inside *manual*, "leg" inside *legible*, "arm" inside *armature*, "body" inside *bodywash* — vetoing most legitimate product descriptions. Seven such traps are pinned in tests.
+2. **Negated mentions must be ignored, and this was nearly a self-inflicted wound.** Real v2 output already contained *"no hands or skin visible"* on an otherwise ideal product flat-lay — a direction the guard would have skipped. Worse, layer 1 makes such phrasing *more* likely, since a prompt saying "no people" invites the model to echo it: one of the three v3 test directions came back with *"no hands or additional props visible."* Without negation handling, layer 1 would have systematically triggered layer 2 and blocked the very outputs it was designed to produce. Spans from a negation cue (`no`, `without`, `free of`, `excluding`, `absent`, `minus`, and `<x>-free`) to the next clause boundary are stripped before matching. `"a hand applying cream, no text"` still correctly trips on *hand*.
+
+**Verified against the two concepts that actually failed in #37:**
+
+| Concept | Layer 2 verdict |
+|---|---|
+| Barrier Science Explainer | skipped, matched `'fingertip'` |
+| Cold-Weather Routine Listicle | skipped, matched `'person'` |
+| Winter Stock-Up Offer (the one that worked) | allowed |
+
+**And layer 1 held on its own:** a fresh live run of the same brief under v3 produced **3 of 3** product-only directions — none needed the safety net. One generated image was rendered end to end and is clean: a frosted jar with mounded cream, no anatomy artifacts. So layer 2 did not fire on new output; it is there for the older and fallback paths.
+
+**Streamlit Cloud feature flag (same pass).** `is_streamlit_cloud()` checks `STREAMLIT_SHARING_MODE`, a `streamlit*` hostname, and a `/mount/src` entry in `sys.path`; `is_available()` consults it first, so the reason names the deployment rather than a confusing MPS error. The toggle is now **hidden entirely** where generation cannot work, rather than shown and failing on click. Saved images still replay there, so demo mode is unaffected.
+
+Deliberately **not** keyed on `STREAMLIT_SERVER_HEADLESS` — that is set by any `streamlit run --server.headless true`, including local development, and would have disabled the feature exactly where it works. Verified both directions by running the real app twice: with `STREAMLIT_SHARING_MODE=1` the page renders **zero checkboxes** and the explanation; locally it renders **one checkbox** and no cloud message.
+
+## Entry #39 — `AuthenticationError: Missing Authentication header`: the shell was redirecting the endpoint
+
+Reported as different from Entry #31, and correctly so: the key was valid and unchanged. It was never the key.
+
+**Root cause.** `~/.zshrc` line 10 exports `ANTHROPIC_BASE_URL="https://openrouter.ai/api"`. The Anthropic SDK reads that variable, so every call from a terminal that sourced the profile went to **OpenRouter, not Anthropic**. OpenRouter authenticates with `Authorization: Bearer`; the SDK — correctly, for an Anthropic key — sends `x-api-key`. OpenRouter sees no header it recognises and answers `401 Missing Authentication header`. The message points at the credential; the credential was fine and arriving at the wrong door.
+
+**Why it looked like the image-generation work caused it.** It did not. The regression hypothesis (a second client instantiation path bypassing `_client()`) was checked first and ruled out: `grep` across `src/`, `app/`, and `mcp_server/` finds exactly one `Anthropic(...)` construction, in `llm.py`. Import ordering was also ruled out by asserting the key value across a `torch`/`diffusers` import. The trigger was environmental and had been latent — it only surfaced once Live mode was exercised from a profile-sourcing terminal.
+
+**Why it did not reproduce at first.** This session's shell had `ANTHROPIC_BASE_URL=https://api.anthropic.com` (overridden by the harness), so direct calls, an `AppTest` harness, and `streamlit run` all succeeded. Reproducing required launching the app through `zsh -c 'source ~/.zshrc && streamlit run ...'` — the user's actual conditions. Then it failed verbatim, first try.
+
+**Fix.** `llm._base_url()` reads `ANTHROPIC_BASE_URL` from **`.env` only**, via `dotenv_values()` (which parses the file without consulting `os.environ`), defaulting to `https://api.anthropic.com`. `_client()` passes it explicitly. Same principle as Entry #31 — project configuration must beat ambient shell state — applied to the endpoint rather than the credential. Pointing at a proxy deliberately still works, by setting the variable in `.env`; both directions are tested.
+
+`ragas_eval.py` had the identical exposure: `ChatAnthropic` also reads the variable, verified picking up `https://openrouter.ai/api` from the environment. It now reuses `llm._base_url()`, so there is one source of truth.
+
+**Verified under the failing conditions, not approximated:** reproduced the exact `401 Missing Authentication header`, applied the fix, then made a real call with `ANTHROPIC_BASE_URL=openrouter`, `ANTHROPIC_AUTH_TOKEN=sk-or-…`, and `ANTHROPIC_API_KEY=""` all set hostile — it succeeded.
+
+---
+
+**A second, unrelated bug surfaced the moment auth worked — and this one WAS mine.**
+
+With the endpoint fixed, Live mode completed and persisted a run with **zero concepts**. The cost log showed `output_tokens = 2500`, exactly `max_tokens`: the response was cut off mid-object and the JSON parsed to nothing.
+
+`max_tokens=2500` was sized for `concept_v1`. `visual_direction` (Entry #34) plus v3's product-only detail (Entry #38) made each concept roughly a third longer, and three of them overrun the ceiling. Raised to 6000; the next real run finished at 2136 output tokens and returned 3 concepts.
+
+The UI had been reporting this as *"No concepts passed the citation self-check"* — a specific, wrong diagnosis, since nothing had been checked. `LLMResponse` now carries `stop_reason`/`was_truncated`, and the log distinguishes "hit max_tokens" from "complete but unparseable", because the two need different fixes.
+
+**Worth naming:** raising the token ceiling is a fix, not a guarantee. Any future prompt change that lengthens output can re-cross it. The truncation is now *detectable* rather than silent, which is the part that generalises.
+
+---
+
+**A third defect, found while verifying the second.** The Entry #38 anatomy guard was firing on its own correct output. A real v3 direction read *"a few water droplets on the **bottle's shoulder**"* — packaging anatomy, not a person. Inspecting the term list showed worse latent cases: `lip` and `eye` would veto **lip balm** and **eye cream**, both in-scope categories per Entry #22, so every direction for them would have been skipped.
+
+Fixed by stripping product and packaging vocabulary before matching, the same pre-pass shape as the negation handling: `<body-part> + <product noun>` ("lip balm", "eye cream", "face serum"), `<container> + <part>` ("bottle's shoulder", "jar neck"), `<part> of the <container>`, and colliding ingredient names ("palm oil", "shea butter"). Verified it does not launder real humans — "her lips" and "a model with bare shoulders" still match.
+
+Re-checked against both real runs: all 3 `concept_v3` directions now pass, and both genuine `concept_v2` failures are still caught.
+
+**The pattern across all three defects:** each was a *keyword or configuration rule colliding with the domain it operates on* — a shell variable shadowing project config, a token budget sized for an older prompt, and a body-part list overlapping cosmetics vocabulary. All three were invisible to unit tests written against the same assumptions that produced the bug, and all three surfaced only on contact with real data or the real environment.
