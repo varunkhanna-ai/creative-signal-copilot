@@ -684,3 +684,41 @@ Entry #37 measured the failure — 4 of 4 human-subject compositions malformed, 
 **Streamlit Cloud feature flag (same pass).** `is_streamlit_cloud()` checks `STREAMLIT_SHARING_MODE`, a `streamlit*` hostname, and a `/mount/src` entry in `sys.path`; `is_available()` consults it first, so the reason names the deployment rather than a confusing MPS error. The toggle is now **hidden entirely** where generation cannot work, rather than shown and failing on click. Saved images still replay there, so demo mode is unaffected.
 
 Deliberately **not** keyed on `STREAMLIT_SERVER_HEADLESS` — that is set by any `streamlit run --server.headless true`, including local development, and would have disabled the feature exactly where it works. Verified both directions by running the real app twice: with `STREAMLIT_SHARING_MODE=1` the page renders **zero checkboxes** and the explanation; locally it renders **one checkbox** and no cloud message.
+
+## Entry #39 — `AuthenticationError: Missing Authentication header`: the shell was redirecting the endpoint
+
+Reported as different from Entry #31, and correctly so: the key was valid and unchanged. It was never the key.
+
+**Root cause.** `~/.zshrc` line 10 exports `ANTHROPIC_BASE_URL="https://openrouter.ai/api"`. The Anthropic SDK reads that variable, so every call from a terminal that sourced the profile went to **OpenRouter, not Anthropic**. OpenRouter authenticates with `Authorization: Bearer`; the SDK — correctly, for an Anthropic key — sends `x-api-key`. OpenRouter sees no header it recognises and answers `401 Missing Authentication header`. The message points at the credential; the credential was fine and arriving at the wrong door.
+
+**Why it looked like the image-generation work caused it.** It did not. The regression hypothesis (a second client instantiation path bypassing `_client()`) was checked first and ruled out: `grep` across `src/`, `app/`, and `mcp_server/` finds exactly one `Anthropic(...)` construction, in `llm.py`. Import ordering was also ruled out by asserting the key value across a `torch`/`diffusers` import. The trigger was environmental and had been latent — it only surfaced once Live mode was exercised from a profile-sourcing terminal.
+
+**Why it did not reproduce at first.** This session's shell had `ANTHROPIC_BASE_URL=https://api.anthropic.com` (overridden by the harness), so direct calls, an `AppTest` harness, and `streamlit run` all succeeded. Reproducing required launching the app through `zsh -c 'source ~/.zshrc && streamlit run ...'` — the user's actual conditions. Then it failed verbatim, first try.
+
+**Fix.** `llm._base_url()` reads `ANTHROPIC_BASE_URL` from **`.env` only**, via `dotenv_values()` (which parses the file without consulting `os.environ`), defaulting to `https://api.anthropic.com`. `_client()` passes it explicitly. Same principle as Entry #31 — project configuration must beat ambient shell state — applied to the endpoint rather than the credential. Pointing at a proxy deliberately still works, by setting the variable in `.env`; both directions are tested.
+
+`ragas_eval.py` had the identical exposure: `ChatAnthropic` also reads the variable, verified picking up `https://openrouter.ai/api` from the environment. It now reuses `llm._base_url()`, so there is one source of truth.
+
+**Verified under the failing conditions, not approximated:** reproduced the exact `401 Missing Authentication header`, applied the fix, then made a real call with `ANTHROPIC_BASE_URL=openrouter`, `ANTHROPIC_AUTH_TOKEN=sk-or-…`, and `ANTHROPIC_API_KEY=""` all set hostile — it succeeded.
+
+---
+
+**A second, unrelated bug surfaced the moment auth worked — and this one WAS mine.**
+
+With the endpoint fixed, Live mode completed and persisted a run with **zero concepts**. The cost log showed `output_tokens = 2500`, exactly `max_tokens`: the response was cut off mid-object and the JSON parsed to nothing.
+
+`max_tokens=2500` was sized for `concept_v1`. `visual_direction` (Entry #34) plus v3's product-only detail (Entry #38) made each concept roughly a third longer, and three of them overrun the ceiling. Raised to 6000; the next real run finished at 2136 output tokens and returned 3 concepts.
+
+The UI had been reporting this as *"No concepts passed the citation self-check"* — a specific, wrong diagnosis, since nothing had been checked. `LLMResponse` now carries `stop_reason`/`was_truncated`, and the log distinguishes "hit max_tokens" from "complete but unparseable", because the two need different fixes.
+
+**Worth naming:** raising the token ceiling is a fix, not a guarantee. Any future prompt change that lengthens output can re-cross it. The truncation is now *detectable* rather than silent, which is the part that generalises.
+
+---
+
+**A third defect, found while verifying the second.** The Entry #38 anatomy guard was firing on its own correct output. A real v3 direction read *"a few water droplets on the **bottle's shoulder**"* — packaging anatomy, not a person. Inspecting the term list showed worse latent cases: `lip` and `eye` would veto **lip balm** and **eye cream**, both in-scope categories per Entry #22, so every direction for them would have been skipped.
+
+Fixed by stripping product and packaging vocabulary before matching, the same pre-pass shape as the negation handling: `<body-part> + <product noun>` ("lip balm", "eye cream", "face serum"), `<container> + <part>` ("bottle's shoulder", "jar neck"), `<part> of the <container>`, and colliding ingredient names ("palm oil", "shea butter"). Verified it does not launder real humans — "her lips" and "a model with bare shoulders" still match.
+
+Re-checked against both real runs: all 3 `concept_v3` directions now pass, and both genuine `concept_v2` failures are still caught.
+
+**The pattern across all three defects:** each was a *keyword or configuration rule colliding with the domain it operates on* — a shell variable shadowing project config, a token budget sized for an older prompt, and a body-part list overlapping cosmetics vocabulary. All three were invisible to unit tests written against the same assumptions that produced the bug, and all three surfaced only on contact with real data or the real environment.

@@ -122,6 +122,32 @@ HUMAN_ANATOMY_TERMS: tuple[str, ...] = (
 _NEGATION_SPAN = r"\b(?:no|without|free of|excluding|absent|minus)\b[^,.;]*"
 _HYPHEN_FREE = r"\b[a-z]+-free\b"
 
+# Product and packaging vocabulary that reuses body-part words. Stripped
+# before matching, for the same reason negations are: these are the phrases a
+# *correct* product-only direction contains, and flagging them would make the
+# guard fire hardest on its own best output.
+#
+# This is not hypothetical. "a few water droplets on the bottle's shoulder"
+# came back from a real concept_v3 run and tripped on `shoulder`. Worse,
+# `lip` and `eye` would veto lip balm and eye cream outright — both in-scope
+# categories per Entry #22 — so every direction for them would be skipped.
+_PRODUCT_PHRASES = (
+    # "lip balm", "eye cream", "hand wash", "body lotion", "face serum"
+    r"\b(?:lip|lips|eye|eyes|hand|hands|foot|body|face|facial|skin|hair)"
+    r"[\s-]+(?:balm|cream|creme|serum|oil|wash|scrub|mask|lotion|butter|gel|"
+    r"stick|tint|gloss|care|treatment|patch|patches|drops?|mist|toner|"
+    r"cleanser|moisturi[sz]er|sunscreen|spf|salve|ointment)\b",
+    # "the bottle's shoulder", "jar neck", "tube body"
+    r"\b(?:bottle|jar|tube|vial|pump|cap|container|packaging|carton|tin)"
+    r"(?:'s)?[\s-]+(?:shoulder|shoulders|neck|body|face|lip|lips|nose)\b",
+    # "shoulder of the bottle"
+    r"\b(?:shoulder|shoulders|neck|body|face|lip|lips|nose)\s+of\s+the\s+"
+    r"(?:bottle|jar|tube|vial|pump|cap|container|carton|tin)\b",
+    # ingredient / material names that collide
+    r"\bpalm\s+(?:oil|butter|wax|extract)\b",
+    r"\bshea\s+butter\b",
+)
+
 
 def find_human_subject(text: str) -> str | None:
     """Return the first human-anatomy term in `text`, or None if clean.
@@ -140,6 +166,10 @@ def find_human_subject(text: str) -> str | None:
     # "a hand applying cream, no text" still trips on "hand".
     scannable = re.sub(_NEGATION_SPAN, " ", lowered)
     scannable = re.sub(_HYPHEN_FREE, " ", scannable)
+    # Then product/packaging vocabulary, so "lip balm" and "bottle's shoulder"
+    # read as the product nouns they are.
+    for pattern in _PRODUCT_PHRASES:
+        scannable = re.sub(pattern, " ", scannable)
     for term in HUMAN_ANATOMY_TERMS:
         if re.search(rf"\b{re.escape(term)}\b", scannable):
             return term

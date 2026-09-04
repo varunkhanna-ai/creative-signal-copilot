@@ -454,3 +454,42 @@ def test_is_available_reports_cloud_before_hardware(monkeypatch):
     ok, reason = is_available()
     assert ok is False
     assert "deployed app" in reason
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Packaging anatomy — real concept_v3 output tripped on "shoulder".
+        "a few water droplets on the bottle's shoulder, muted background",
+        "the neck of the bottle catching the light",
+        "a tube body with an embossed pattern",
+        # Product categories that reuse body-part words. lip balm and eye
+        # cream are IN SCOPE per Entry #22, so vetoing them would disable the
+        # feature for a whole category.
+        "A lip balm tin on a marble surface, soft lighting",
+        "An eye cream jar with a gold cap",
+        "a body lotion pump bottle",
+        "hand wash bottle beside a basin",
+        "a face serum dropper on stone",
+        # Ingredient names.
+        "palm oil listed on the label",
+        "shea butter jar, warm tones",
+    ],
+)
+def test_guard_allows_product_and_packaging_vocabulary(text):
+    """Regression (Entry #39): the guard must not fire on the vocabulary a
+    correct product-only direction is made of."""
+    assert imagegen.find_human_subject(text) is None
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("a model with bare shoulders", "model"),
+        ("her lips slightly parted", "lips"),
+        ("a person applying cream to their face", "person"),
+    ],
+)
+def test_product_vocabulary_stripping_does_not_mask_real_humans(text, expected):
+    """Stripping "lip balm" must not also launder "her lips"."""
+    assert imagegen.find_human_subject(text) == expected

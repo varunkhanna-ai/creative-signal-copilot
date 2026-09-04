@@ -233,7 +233,11 @@ def generate_concepts(
         task="generate_concepts",
         model=SONNET_MODEL,
         prompt_version=CONCEPT_PROMPT,
-        max_tokens=2500,
+        # 2500 was sufficient for concept_v1, but visual_direction (Entry #34)
+        # plus v3's product-only detail (Entry #38) made each concept roughly a
+        # third longer -- three concepts now overrun 2500 and the JSON is cut
+        # off mid-object, parsing to zero concepts. See Entry #39.
+        max_tokens=6000,
     )
     parsed = parse_concepts(response.text)
     if not parsed:
@@ -244,9 +248,19 @@ def generate_concepts(
         # after the fact. See decision-log Entry #29.
         import logging
 
+        # Truncation and a genuine parse failure look identical from here —
+        # both yield zero concepts — but they need different fixes, so name
+        # which one happened rather than logging one message for both.
+        cause = (
+            f"the response hit max_tokens ({response.output_tokens} output "
+            "tokens) and the JSON was cut off mid-object"
+            if response.was_truncated
+            else "the response was complete but did not parse as concept JSON"
+        )
         logging.getLogger(__name__).warning(
-            "generate_concepts: parse_concepts returned 0 concepts from a "
-            "non-empty LLM response. Raw response follows.\n%s",
+            "generate_concepts: 0 concepts from a non-empty LLM response — "
+            "%s. Raw response follows.\n%s",
+            cause,
             response.text,
         )
     allowed = {c.creative_id for c in creatives}
